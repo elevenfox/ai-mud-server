@@ -102,20 +102,19 @@ stop:
 	@if [ -f $(FRONTEND_PID) ]; then \
 		PID=$$(cat $(FRONTEND_PID)); \
 		if kill -0 $$PID 2>/dev/null; then \
-			kill -TERM -$$PID 2>/dev/null || kill $$PID 2>/dev/null || true; \
+			kill $$PID 2>/dev/null || true; \
 			echo "✅ 前端主进程已停止 (PID: $$PID)"; \
 		fi; \
 		rm -f $(FRONTEND_PID); \
 	fi
-	@# 杀死所有 next 相关进程（包括子进程）
-	@pkill -f "next dev" 2>/dev/null || true
-	@pkill -f "next-server" 2>/dev/null || true
-	@pkill -f "node.*next" 2>/dev/null || true
 	@# 等待进程退出
 	@sleep 1
-	@# 强制杀死端口上残留的进程
-	@lsof -ti:$(BACKEND_PORT) | xargs kill -9 2>/dev/null || true
-	@lsof -ti:$(FRONTEND_PORT) | xargs kill -9 2>/dev/null || true
+	@# 强制杀死端口上残留的进程（最可靠的方法）
+	@echo "清理端口 $(BACKEND_PORT)..."
+	@-fuser -k $(BACKEND_PORT)/tcp 2>/dev/null || lsof -ti:$(BACKEND_PORT) | xargs kill -9 2>/dev/null || true
+	@echo "清理端口 $(FRONTEND_PORT)..."
+	@-fuser -k $(FRONTEND_PORT)/tcp 2>/dev/null || lsof -ti:$(FRONTEND_PORT) | xargs kill -9 2>/dev/null || true
+	@sleep 1
 	@echo "✅ 所有服务已停止"
 
 # 重启服务
