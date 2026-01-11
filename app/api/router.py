@@ -10,6 +10,7 @@ from app.core.npc_agent import NPCAgent
 from app.core.choice_generator import ChoiceGenerator
 from app.core.judge import ActionJudge
 from app.core.checkpoint import CheckpointManager
+from app.core.npc_manager import NPCManager, spawn_npcs_for_scene
 from app.models.schemas import (
     World, Location, Player, NPC, GameEvent,
     Choice, ChoicesResponse, ActionResult, JudgeResult
@@ -90,9 +91,25 @@ async def get_world_state(
     player_id: str, 
     session: AsyncSession = Depends(get_session)
 ):
-    """获取当前世界状态（含选项）"""
+    """获取当前世界状态（含选项）- 支持动态 NPC 加载"""
     engine = WorldEngine(session)
-    world, player, location, npcs = await engine.get_world_context(world_id, player_id)
+    world, player, location, existing_npcs = await engine.get_world_context(world_id, player_id)
+    
+    # ====== 动态 NPC 加载 ======
+    # 如果场景没有 NPC，尝试根据场景和剧情动态生成
+    npc_manager = NPCManager(session)
+    
+    # 构建故事上下文（用于 AI 判断需要什么角色）
+    story_context = f"玩家 {player.name} 进入了 {location.name}。{location.description}"
+    
+    # 获取场景 NPC（可能触发动态创建）
+    npcs = await npc_manager.get_scene_npcs(
+        world_id=world_id,
+        location_id=location.id,
+        story_context=story_context if not existing_npcs else "",  # 只有无 NPC 时才触发
+        player_id=player_id
+    )
+    # ====== 动态 NPC 加载结束 ======
     
     # 生成当前情境的选项
     choice_gen = ChoiceGenerator(session)
@@ -358,6 +375,89 @@ async def delete_checkpoint(
         raise HTTPException(status_code=404, detail="Checkpoint not found")
     
     return {"success": True}
+
+
+# ============== NPC Management Endpoints ==============
+
+@router.post("/npc/spawn")
+async def spawn_npc_for_scene(
+    world_id: str,
+    location_id: str,
+    story_context: str = "",
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    手动触发场景 NPC 生成
+    
+    用于：
+    - 剧情需要特定角色出场
+    - 测试 NPC 动态生成功能
+    """
+    manager = NPCManager(session)
+    npcs = await manager.get_scene_npcs(
+        world_id=world_id,
+        location_id=location_id,
+        story_context=story_context or "需要为这个场景添加适合的角色"
+    )
+    
+    return {
+        "success": True,
+        "npcs": [
+            {
+                "id": npc.id,
+                "name": npc.name,
+                "description": npc.description,
+                "portrait_url": npc.portrait_url,
+                "is_new": npc.id.startswith("npc_")  # 新创建的 NPC
+            }
+            for npc in npcs
+        ]
+    }
+
+
+@router.post("/npc/{npc_id}/move")
+async def move_npc(
+    npc_id: str,
+    location_id: str,
+    session: AsyncSession = Depends(get_session)
+):
+    """移动 NPC 到新场景"""
+    manager = NPCManager(session)
+    success = await manager.move_npc(npc_id, location_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="NPC not found")
+    
+    return {"success": True}
+
+
+@router.post("/npc/{npc_id}/update")
+async def update_npc(
+    npc_id: str,
+    emotion: Optional[str] = None,
+    relationship_change: int = 0,
+    position: Optional[str] = None,
+    session: AsyncSession = Depends(get_session)
+):
+    """更新 NPC 状态（情绪、关系、位置）"""
+    manager = NPCManager(session)
+    npc = await manager.update_npc_state(
+        npc_id=npc_id,
+        emotion=emotion,
+        relationship_change=relationship_change,
+        position=position
+    )
+    
+    if not npc:
+        raise HTTPException(status_code=404, detail="NPC not found")
+    
+    return {
+        "id": npc.id,
+        "name": npc.name,
+        "emotion": npc.current_emotion,
+        "relationship": npc.relationship,
+        "position": npc.position
+    }
 
 
 # ============== Health Check ==============

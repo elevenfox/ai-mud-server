@@ -217,6 +217,86 @@ RP_FORMAT_GUIDE = """
 """
 
 
+async def suggest_scene_npcs(
+    scene_name: str,
+    scene_description: str,
+    story_context: str,
+    available_characters: List[Dict[str, Any]],
+    current_npcs: List[str] = None
+) -> Dict[str, Any]:
+    """
+    根据场景和剧情，建议应该出现的 NPC
+    
+    用于：
+    - 场景切换时决定加载哪些角色
+    - 剧情发展时引入新角色
+    """
+    
+    system_prompt = """你是一个游戏剧情导演。根据场景和故事发展，建议应该出现哪些角色。请用中文回复。
+
+规则：
+- 考虑场景类型和氛围
+- 考虑剧情发展的需要
+- 不要添加太多角色（1-3 个为宜）
+- 如果有合适的现有角色，优先使用
+- 只有在必要时才建议创建新角色
+
+用 JSON 格式回复:
+{
+    "should_add_npcs": true/false,
+    "reasoning": "为什么需要/不需要添加角色",
+    "suggested_npcs": [
+        {
+            "action": "use_existing" 或 "create_new",
+            "character_id": "如果使用现有角色，填写 ID",
+            "role": "角色在剧情中的作用，如：服务员、神秘人",
+            "entrance": "角色出场方式描述",
+            "new_character": {  // 只有 create_new 时需要
+                "name": "角色名",
+                "description": "外貌描述",
+                "personality": "性格",
+                "first_message": "开场白"
+            }
+        }
+    ]
+}"""
+
+    # 构建可用角色列表
+    chars_text = "无可用角色"
+    if available_characters:
+        chars_list = [
+            f"- {c.get('id')}: {c.get('name')} ({c.get('description', '')[:50]}...)"
+            for c in available_characters[:10]
+        ]
+        chars_text = "\n".join(chars_list)
+    
+    current_text = "无"
+    if current_npcs:
+        current_text = ", ".join(current_npcs)
+    
+    user_prompt = f"""场景：{scene_name}
+场景描述：{scene_description}
+
+故事上下文：
+{story_context}
+
+当前场景中的角色：{current_text}
+
+可用的角色库：
+{chars_text}
+
+这个场景应该有哪些角色？"""
+
+    if MOCK_MODE:
+        return {
+            "should_add_npcs": False,
+            "reasoning": "[MOCK] 当前场景不需要额外角色",
+            "suggested_npcs": []
+        }
+    
+    return await generate_json(system_prompt, user_prompt)
+
+
 async def judge_action(
     world_rules: List[str],
     current_situation: str,
