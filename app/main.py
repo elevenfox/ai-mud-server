@@ -20,8 +20,9 @@ app.add_middleware(
 
 # Static files for images/assets
 static_path = Path(__file__).parent.parent / "static"
-if static_path.exists():
-    app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+uploads_path = static_path / "uploads"
+uploads_path.mkdir(parents=True, exist_ok=True)  # 确保目录存在
+app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 @app.on_event("startup")
 async def on_startup():
