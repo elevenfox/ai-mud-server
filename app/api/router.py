@@ -106,6 +106,12 @@ async def get_world_state(
         if first_msg:
             first_messages[npc.id] = first_msg
     
+    # 从 AI 生成的选项中获取角色位置
+    character_positions = choices_response.character_positions or {}
+    
+    # 如果 AI 没有返回位置，使用默认逻辑
+    player_position = character_positions.get("player", _calculate_player_position(npcs))
+    
     return {
         "world": {
             "id": world.id,
@@ -130,7 +136,8 @@ async def get_world_state(
                 "relationship": npc.relationship,
                 "portrait_url": npc.portrait_url,
                 "first_message": first_messages.get(npc.id),
-                "position": npc.position  # left, center, right
+                # 优先使用 AI 决定的位置，否则用数据库中的默认值
+                "position": character_positions.get(npc.id, npc.position)
             }
             for npc in npcs
         ],
@@ -141,9 +148,8 @@ async def get_world_state(
             "portrait_url": player.portrait_url,
             "personality": player.personality,
             "background": player.background,
-            # position 由 AI 根据剧情动态决定
-            # 简单逻辑：如果有 NPC 在右边，玩家在左边；否则玩家在右边
-            "position": _calculate_player_position(npcs),
+            # 优先使用 AI 决定的位置
+            "position": player_position,
         },
         "choices": choices_response
     }

@@ -161,6 +161,8 @@ class ChoicesResponse(BaseModel):
     choices: List[Choice]
     allow_custom: bool = True  # 是否允许自由输入
     mood: str = "neutral"  # BGM mood 提示
+    # AI 决定的角色位置 {"player": "left", "npc_1": "right", ...}
+    character_positions: Dict[str, str] = Field(default_factory=dict)
 
 
 class ActionResult(BaseModel):

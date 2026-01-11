@@ -91,13 +91,20 @@ World flags: {world.flags}
             }
         }
         
-        # AI 生成选项
+        # 构建 NPC 信息列表（传给 AI 决定位置）
+        npcs_in_scene = [
+            {"id": npc.id, "name": npc.name, "emotion": npc.current_emotion}
+            for npc in npcs
+        ]
+        
+        # AI 生成选项（包括角色位置）
         result = await generate_choices(
             world_rules=world.rules or [],
             current_situation=current_situation,
             recent_events=recent_events,
             player_stats=player_stats,
-            available_actions=available_actions
+            available_actions=available_actions,
+            npcs_in_scene=npcs_in_scene
         )
         
         # 解析结果
@@ -110,11 +117,15 @@ World flags: {world.flags}
             for i, c in enumerate(result.get("choices", []))
         ]
         
+        # 获取 AI 生成的角色位置
+        character_positions = result.get("character_positions", {})
+        
         return ChoicesResponse(
             narrative=result.get("narrative", "You consider your options..."),
             choices=choices,
             allow_custom=True,
-            mood=result.get("mood", world.current_mood)
+            mood=result.get("mood", world.current_mood),
+            character_positions=character_positions
         )
     
     async def execute_choice(

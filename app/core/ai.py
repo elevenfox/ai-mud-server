@@ -37,7 +37,10 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
                 {"id": "3", "text": "[MOCK] 选项 C: 与 NPC 交谈"}
             ],
             "narrative": "[MOCK] 这是一段叙事文本...",
-            "mood": "neutral"
+            "mood": "neutral",
+            "character_positions": {
+                "player": "right"
+            }
         }
     
     full_system = f"{system_prompt}\n\n你必须只返回有效的 JSON。{schema_hint}"
@@ -133,11 +136,18 @@ async def generate_choices(
     current_situation: str,
     recent_events: List[str],
     player_stats: Dict[str, Any],
-    available_actions: List[str]
+    available_actions: List[str],
+    npcs_in_scene: List[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
-    """生成玩家选项"""
+    """生成玩家选项，同时决定角色在场景中的位置"""
     
-    system_prompt = """你是一个 MUD 游戏的游戏大师。为玩家生成有意义的选项。请用中文回复。
+    # 构建 NPC 信息
+    npc_info = ""
+    if npcs_in_scene:
+        npc_names = [npc.get("name", "未知") for npc in npcs_in_scene]
+        npc_info = f"\n当前场景中的 NPC: {', '.join(npc_names)}"
+    
+    system_prompt = """你是一个 MUD 游戏的游戏大师。为玩家生成有意义的选项，并像视觉小说导演一样安排角色在画面中的位置。请用中文回复。
 
 规则:
 - 生成 3-4 个不同的、有意义的选项
@@ -145,6 +155,13 @@ async def generate_choices(
 - 选项应该符合世界规则
 - 至少包含一个「安全」选项和一个「冒险」选项
 - 选项应该在当前情境下感觉自然
+
+角色位置规则（像视觉小说一样）:
+- 位置有三个：left（左）、center（中）、right（右）
+- 玩家（player）和 NPC 应该根据剧情关系和对话情境安排位置
+- 对话时，双方通常面对面（一左一右）
+- 重要角色或正在说话的角色可以在中间
+- 多个角色时要合理分布
 
 用 JSON 格式回复:
 {
@@ -154,14 +171,19 @@ async def generate_choices(
         {"id": "2", "text": "选项描述", "hint": null},
         ...
     ],
-    "mood": "neutral|tense|calm|mysterious|action"
+    "mood": "neutral|tense|calm|mysterious|action",
+    "character_positions": {
+        "player": "left|center|right",
+        "npc_id_1": "left|center|right",
+        "npc_id_2": "left|center|right"
+    }
 }"""
 
     user_prompt = f"""世界规则:
 {chr(10).join(f'- {rule}' for rule in world_rules)}
 
 当前情境:
-{current_situation}
+{current_situation}{npc_info}
 
 最近事件:
 {chr(10).join(f'- {event}' for event in recent_events[-5:])}
@@ -172,7 +194,9 @@ async def generate_choices(
 可用行动（物理上可能的）:
 {chr(10).join(f'- {action}' for action in available_actions)}
 
-为玩家生成合适的选项。"""
+{f'场景中的 NPC ID 列表: {[npc.get("id") for npc in npcs_in_scene]}' if npcs_in_scene else '场景中没有 NPC'}
+
+为玩家生成合适的选项，并安排角色的画面位置。"""
 
     return await generate_json(system_prompt, user_prompt)
 
