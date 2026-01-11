@@ -79,15 +79,26 @@ async def generate_npc_response(
 
 世界背景: {world_context}
 
+玩家输入格式说明：
+- *星号包裹* = 玩家的动作（例如：*微微点头*）
+- "双引号" = 玩家说的话（例如："你好"）
+- （圆括号）= 玩家给AI的指示，不是角色对话
+- ~波浪号~ = 拖长音
+
 规则:
 - 完全保持 {npc_name} 的角色
 - 你的回复应该反映你的性格特点
 - 保持简洁（通常2-4句话）
 - 你可以表达会影响立绘的情绪
+- 理解玩家的动作并做出相应反应
+
+你的回复格式：
+- 用 *星号* 包裹你的动作和表情
+- 用 "引号" 或不带引号直接回复对话
 
 用 JSON 格式回复:
 {{
-    "response": "你的角色内回复",
+    "response": "你的角色内回复（可混合动作和对话，如：*微笑* \\"当然可以。\\"）",
     "emotion": "default|happy|angry|sad|surprised|fearful",
     "relationship_change": -5 到 +5（这次互动如何影响你对玩家的感觉）,
     "internal_thought": "简短的内心独白（不会显示给玩家）"
@@ -166,6 +177,22 @@ async def generate_choices(
     return await generate_json(system_prompt, user_prompt)
 
 
+# RP 格式说明（供 AI 理解玩家输入）
+RP_FORMAT_GUIDE = """
+玩家输入格式说明：
+- *星号包裹* = 动作或场景描写（例如：*缓缓走近，眼神警惕*）
+- "双引号" = 角色说的话（例如："你是谁？"）
+- （圆括号）= 玩家意图/OOC指令（例如：（我想去酒吧找线索））
+- ~波浪号~ = 拖长音或特殊语气（例如："等一下~"）
+- **双星号** = 重点强调
+
+玩家可能混合使用这些格式，例如：
+*走向酒保* "来杯最烈的。" *把钱拍在桌上*
+
+你需要理解这些格式，并根据玩家的意图做出响应。
+"""
+
+
 async def judge_action(
     world_rules: List[str],
     current_situation: str,
@@ -174,7 +201,9 @@ async def judge_action(
 ) -> Dict[str, Any]:
     """Judge 模块：校验玩家自由输入是否合法"""
     
-    system_prompt = """你是 MUD 游戏的规则执行者。你的任务是判断玩家的行动是否被允许。请用中文回复。
+    system_prompt = f"""你是 MUD 游戏的规则执行者。你的任务是判断玩家的行动是否被允许。请用中文回复。
+
+{RP_FORMAT_GUIDE}
 
 拒绝的标准:
 1. 违反明确的世界规则
@@ -188,14 +217,20 @@ async def judge_action(
 3. 意想不到但有效的玩家能动性
 
 对创意行动要宽容，但对规则违反要严格。
+圆括号（）中的内容是玩家的OOC意图，应该尊重但转化为游戏内行动。
 
 用 JSON 回复:
-{
+{{
     "allowed": true/false,
     "reason": "如果拒绝，说明原因",
     "suggested_action": "如果拒绝，给出替代建议，如果允许则为 null",
-    "modified_action": "如果允许，清理后的行动版本"
-}"""
+    "modified_action": "如果允许，清理后的行动版本",
+    "parsed_intent": {{
+        "actions": ["解析出的动作列表"],
+        "dialogues": ["解析出的对话列表"],
+        "ooc_intent": "玩家的OOC意图（如果有）"
+    }}
+}}"""
 
     user_prompt = f"""世界规则:
 {chr(10).join(f'- {rule}' for rule in world_rules)}
@@ -209,14 +244,19 @@ async def judge_action(
 玩家尝试的行动:
 「{player_action}」
 
-判断这个行动。"""
+解析玩家的输入格式，判断这个行动是否允许。"""
 
     if MOCK_MODE:
         return {
             "allowed": True,
             "reason": None,
             "suggested_action": None,
-            "modified_action": player_action
+            "modified_action": player_action,
+            "parsed_intent": {
+                "actions": [player_action],
+                "dialogues": [],
+                "ooc_intent": None
+            }
         }
     
     response = await client.chat.completions.create(

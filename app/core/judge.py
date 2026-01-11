@@ -121,20 +121,33 @@ WORLD FLAGS: {world.flags}"""
         # 生成行动结果叙事
         situation = await self.build_situation_context(world, location, player, npcs)
         
-        system_prompt = """You are the narrator for a MUD game.
-The player has taken a custom action. Describe what happens.
-Be creative but stay within the world's rules.
-Include consequences, reactions from NPCs if relevant, and sensory details."""
+        system_prompt = """你是一个 MUD 游戏的叙事者。请用中文回复。
+玩家执行了一个自定义行动，请描述发生了什么。
+要有创意，但要遵守世界规则。
+包含后果、NPC 的反应（如果相关）以及感官细节。
 
-        user_prompt = f"""WORLD RULES:
+玩家输入格式说明：
+- *星号包裹* = 动作或场景描写
+- "双引号" = 角色说的话
+- （圆括号）= 玩家意图/OOC指令
+- ~波浪号~ = 拖长音或特殊语气
+- **双星号** = 重点强调
+
+你的回复格式：
+- 用第二人称描述玩家的行动和结果（"你..."）
+- 用 *星号* 包裹动作和场景描写
+- 用 "引号" 包裹对话
+- NPC 对话用引号，并注明说话者"""
+
+        user_prompt = f"""世界规则:
 {chr(10).join(f'- {rule}' for rule in (world.rules or []))}
 
-CURRENT SITUATION:
+当前情境:
 {situation}
 
-PLAYER'S ACTION: {action_text}
+玩家行动: {action_text}
 
-Narrate the result of this action. Be vivid but concise (2-3 paragraphs)."""
+描述这个行动的结果。生动但简洁（2-3段）。"""
 
         narrative = await generate_narrative(system_prompt, user_prompt)
         
