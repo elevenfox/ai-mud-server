@@ -52,6 +52,36 @@ class CheckpointRequest(BaseModel):
     description: Optional[str] = None
 
 
+# ============== Helper Functions ==============
+
+def _calculate_player_position(npcs: List[NPC]) -> str:
+    """
+    根据当前场景的 NPC 位置，动态决定玩家立绘位置。
+    
+    简单逻辑：
+    - 如果有 NPC 在右边，玩家在左边
+    - 如果有 NPC 在左边但右边没有，玩家在右边
+    - 如果 NPC 都在中间，玩家在右边
+    - 没有 NPC，玩家在右边
+    
+    后续可以让 AI 根据剧情智能决定位置。
+    """
+    if not npcs:
+        return "right"
+    
+    npc_positions = [npc.position for npc in npcs]
+    
+    # 如果右边有 NPC，玩家去左边
+    if "right" in npc_positions:
+        return "left"
+    # 如果左边有 NPC，玩家去右边
+    elif "left" in npc_positions:
+        return "right"
+    # NPC 在中间，玩家去右边
+    else:
+        return "right"
+
+
 # ============== World State Endpoints ==============
 
 @router.get("/world/{world_id}/state")
@@ -111,7 +141,9 @@ async def get_world_state(
             "portrait_url": player.portrait_url,
             "personality": player.personality,
             "background": player.background,
-            "position": player.position,  # left, center, right
+            # position 由 AI 根据剧情动态决定
+            # 简单逻辑：如果有 NPC 在右边，玩家在左边；否则玩家在右边
+            "position": _calculate_player_position(npcs),
         },
         "choices": choices_response
     }
