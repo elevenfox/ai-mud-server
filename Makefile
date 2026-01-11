@@ -83,6 +83,7 @@ start: _ensure_log_dir
 # 停止所有服务
 stop:
 	@echo "🛑 停止服务..."
+	@# 停止后端
 	@if [ -f $(BACKEND_PID) ]; then \
 		PID=$$(cat $(BACKEND_PID)); \
 		if kill -0 $$PID 2>/dev/null; then \
@@ -95,21 +96,24 @@ stop:
 	else \
 		echo "⚠️  后端 PID 文件不存在"; \
 	fi
-	@# 也尝试杀死所有 uvicorn 进程
+	@# 杀死所有 uvicorn 进程
 	@pkill -f "uvicorn app.main" 2>/dev/null || true
+	@# 停止前端 - Next.js 会启动多个子进程，需要全部杀死
 	@if [ -f $(FRONTEND_PID) ]; then \
 		PID=$$(cat $(FRONTEND_PID)); \
 		if kill -0 $$PID 2>/dev/null; then \
-			kill $$PID 2>/dev/null || true; \
-			echo "✅ 前端已停止 (PID: $$PID)"; \
-		else \
-			echo "⚠️  前端进程不存在"; \
+			kill -TERM -$$PID 2>/dev/null || kill $$PID 2>/dev/null || true; \
+			echo "✅ 前端主进程已停止 (PID: $$PID)"; \
 		fi; \
 		rm -f $(FRONTEND_PID); \
-	else \
-		echo "⚠️  前端 PID 文件不存在"; \
 	fi
-	@# 也尝试杀死端口上的进程
+	@# 杀死所有 next 相关进程（包括子进程）
+	@pkill -f "next dev" 2>/dev/null || true
+	@pkill -f "next-server" 2>/dev/null || true
+	@pkill -f "node.*next" 2>/dev/null || true
+	@# 等待进程退出
+	@sleep 1
+	@# 强制杀死端口上残留的进程
 	@lsof -ti:$(BACKEND_PORT) | xargs kill -9 2>/dev/null || true
 	@lsof -ti:$(FRONTEND_PORT) | xargs kill -9 2>/dev/null || true
 	@echo "✅ 所有服务已停止"
