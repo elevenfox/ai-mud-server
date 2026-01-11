@@ -638,7 +638,7 @@ async def select_avatar(
         raise HTTPException(status_code=400, detail="该角色不可作为玩家形象")
     
     # 随机选择初始场景
-    # 优先选择标记为 is_starting_location 的场景
+    # 1. 先查 Location 表中标记为初始场景的
     starting_loc_statement = select(Location).where(
         Location.world_id == world_id,
         Location.is_starting_location == True
@@ -646,11 +646,36 @@ async def select_avatar(
     starting_loc_result = await session.execute(starting_loc_statement)
     starting_locations = list(starting_loc_result.scalars().all())
     
+    # 2. 如果 Location 表没有初始场景，从 LocationTemplate 模板创建
+    if not starting_locations:
+        starting_template_statement = select(LocationTemplate).where(
+            LocationTemplate.is_starting_location == True
+        )
+        starting_template_result = await session.execute(starting_template_statement)
+        starting_templates = list(starting_template_result.scalars().all())
+        
+        # 从模板创建 Location 记录
+        for tpl in starting_templates:
+            new_location = Location(
+                id=f"loc_{tpl.id}",  # 使用模板ID作为前缀
+                world_id=world_id,
+                name=tpl.name,
+                description=tpl.description,
+                background_url=tpl.background_path,
+                connections=[],
+                is_starting_location=True
+            )
+            session.add(new_location)
+            starting_locations.append(new_location)
+        
+        if starting_templates:
+            await session.flush()  # 确保新记录有效
+    
     if starting_locations:
         # 随机选择一个初始场景
         location = random.choice(starting_locations)
     else:
-        # 没有标记初始场景，使用任意场景
+        # 还是没有初始场景，使用任意场景
         loc_statement = select(Location).where(Location.world_id == world_id).limit(1)
         loc_result = await session.execute(loc_statement)
         location = loc_result.scalar_one_or_none()
