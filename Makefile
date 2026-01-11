@@ -45,7 +45,7 @@ install-backend:
 # 安装前端依赖
 install-frontend:
 	@echo "📦 安装前端依赖..."
-	cd $(FRONTEND_DIR) && npm install
+	cd $(FRONTEND_DIR) && npm install --no-bin-links
 	@echo "✅ 前端依赖安装完成"
 
 # 初始化数据库
