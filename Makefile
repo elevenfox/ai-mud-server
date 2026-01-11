@@ -70,7 +70,7 @@ start: _ensure_log_dir
 		echo "⚠️  前端已在运行 (PID: $$(cat $(FRONTEND_PID)))"; \
 	else \
 		echo "启动前端服务 (端口 $(FRONTEND_PORT))..."; \
-		cd $(FRONTEND_DIR) && nohup npm run dev > $(LOG_DIR)/frontend.log 2>&1 & echo $$! > $(FRONTEND_PID); \
+		cd $(FRONTEND_DIR) && nohup node node_modules/next/dist/bin/next dev > $(LOG_DIR)/frontend.log 2>&1 & echo $$! > $(FRONTEND_PID); \
 		sleep 3; \
 		echo "✅ 前端已启动 (PID: $$(cat $(FRONTEND_PID)))"; \
 	fi
