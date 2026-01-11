@@ -111,6 +111,7 @@ async def get_world_state(
             "portrait_url": player.portrait_url,
             "personality": player.personality,
             "background": player.background,
+            "position": player.position,  # left, center, right
         },
         "choices": choices_response
     }

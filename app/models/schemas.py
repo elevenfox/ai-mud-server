@@ -60,6 +60,8 @@ class Player(SQLModel, table=True):
     personality: Optional[str] = None  # 性格/说话语气
     background: Optional[str] = None  # 背景故事
     attributes: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))  # 属性
+    # 在场景中的位置（left, center, right）- 由剧情决定
+    position: str = "right"
 
 class GameEvent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
