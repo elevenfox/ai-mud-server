@@ -99,7 +99,8 @@ async def get_world_state(
                 "emotion": npc.current_emotion,
                 "relationship": npc.relationship,
                 "portrait_url": npc.portrait_url,
-                "first_message": first_messages.get(npc.id)
+                "first_message": first_messages.get(npc.id),
+                "position": npc.position  # left, center, right
             }
             for npc in npcs
         ],

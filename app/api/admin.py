@@ -363,6 +363,7 @@ async def list_locations(
                 "description": loc.description,
                 "background_path": loc.background_path,
                 "tags": loc.tags,
+                "is_starting_location": loc.is_starting_location,
                 "created_at": loc.created_at.isoformat() if loc.created_at else None,
             }
             for loc in locations
@@ -384,6 +385,7 @@ async def create_location(
         tags=data.tags,
         default_connections=data.default_connections,
         default_characters=data.default_characters,
+        is_starting_location=data.is_starting_location,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
@@ -413,6 +415,7 @@ async def get_location(
         "tags": location.tags,
         "default_connections": location.default_connections,
         "default_characters": location.default_characters,
+        "is_starting_location": location.is_starting_location,
         "raw_card_data": location.raw_card_data,
         "created_at": location.created_at.isoformat() if location.created_at else None,
         "updated_at": location.updated_at.isoformat() if location.updated_at else None,
@@ -615,7 +618,8 @@ async def select_avatar(
     session: AsyncSession = Depends(get_session)
 ):
     """选择 Avatar 并创建/更新玩家（不需要认证）"""
-    from app.models.schemas import Player
+    import random
+    from app.models.schemas import Player, Location
     
     template_id = data.get("template_id")
     player_name = data.get("player_name")
@@ -633,6 +637,27 @@ async def select_avatar(
     if not template.is_player_avatar:
         raise HTTPException(status_code=400, detail="该角色不可作为玩家形象")
     
+    # 随机选择初始场景
+    # 优先选择标记为 is_starting_location 的场景
+    starting_loc_statement = select(Location).where(
+        Location.world_id == world_id,
+        Location.is_starting_location == True
+    )
+    starting_loc_result = await session.execute(starting_loc_statement)
+    starting_locations = list(starting_loc_result.scalars().all())
+    
+    if starting_locations:
+        # 随机选择一个初始场景
+        location = random.choice(starting_locations)
+    else:
+        # 没有标记初始场景，使用任意场景
+        loc_statement = select(Location).where(Location.world_id == world_id).limit(1)
+        loc_result = await session.execute(loc_statement)
+        location = loc_result.scalar_one_or_none()
+    
+    if not location:
+        raise HTTPException(status_code=400, detail="世界中没有可用的位置")
+    
     # 检查玩家是否存在
     player = await session.get(Player, player_id)
     
@@ -644,17 +669,9 @@ async def select_avatar(
         player.personality = template.personality
         player.background = template.scenario
         player.attributes = template.initial_attributes or {}
+        player.location_id = location.id  # 更新到初始场景
     else:
         # 创建新玩家
-        # 获取默认位置
-        from app.models.schemas import Location
-        loc_statement = select(Location).where(Location.world_id == world_id).limit(1)
-        loc_result = await session.execute(loc_statement)
-        location = loc_result.scalar_one_or_none()
-        
-        if not location:
-            raise HTTPException(status_code=400, detail="世界中没有可用的位置")
-        
         player = Player(
             id=player_id,
             world_id=world_id,
@@ -676,5 +693,10 @@ async def select_avatar(
             "id": player.id,
             "name": player.name,
             "portrait_url": player.portrait_url,
+        },
+        "starting_location": {
+            "id": location.id,
+            "name": location.name,
+            "background_url": location.background_url,
         }
     }

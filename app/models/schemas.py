@@ -26,6 +26,8 @@ class Location(SQLModel, table=True):
     background_url: Optional[str] = None
     # 相连地点的 ID 列表
     connections: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # 是否可作为初始场景
+    is_starting_location: bool = False
 
 class NPC(SQLModel, table=True):
     id: str = Field(primary_key=True)
@@ -43,6 +45,8 @@ class NPC(SQLModel, table=True):
     current_emotion: str = "default"  # default, happy, angry, sad, surprised
     # 与玩家的关系值 (-100 到 100)
     relationship: int = 0
+    # 在场景中的位置（left, center, right）
+    position: str = "center"
 
 class Player(SQLModel, table=True):
     id: str = Field(primary_key=True)
@@ -131,6 +135,8 @@ class LocationTemplate(SQLModel, table=True):
     default_connections: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     # 默认放置的角色模板 ID 列表
     default_characters: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # 是否可作为初始场景
+    is_starting_location: bool = False
     # 原始卡片数据（用于导出）
     raw_card_data: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     # 创建时间
@@ -221,6 +227,7 @@ class LocationTemplateCreate(BaseModel):
     tags: List[str] = []
     default_connections: List[str] = []
     default_characters: List[str] = []
+    is_starting_location: bool = False
 
 
 class LocationTemplateUpdate(BaseModel):
@@ -230,6 +237,7 @@ class LocationTemplateUpdate(BaseModel):
     tags: Optional[List[str]] = None
     default_connections: Optional[List[str]] = None
     default_characters: Optional[List[str]] = None
+    is_starting_location: Optional[bool] = None
 
 
 class WorldRulesUpdate(BaseModel):
