@@ -26,6 +26,11 @@ from app.services.chub_parser import (
     parse_character_card, create_character_card,
     parse_location_card, create_location_card
 )
+from app.core.image_generator import (
+    generate_scene_background,
+    generate_character_portrait,
+    save_image
+)
 
 load_dotenv()
 
@@ -359,6 +364,44 @@ async def upload_character_portrait(
     return {"success": True, "portrait_path": character.portrait_path}
 
 
+@router.post("/characters/{char_id}/generate-portrait")
+async def generate_character_portrait_endpoint(
+    char_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: bool = Depends(verify_admin_token)
+):
+    """使用 AI 生成角色立绘"""
+    character = await session.get(CharacterTemplate, char_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="角色不存在")
+    
+    # 生成立绘
+    portrait_image = await generate_character_portrait(
+        character.name,
+        character.description or "",
+        character.personality or ""
+    )
+    
+    if not portrait_image:
+        raise HTTPException(status_code=500, detail="立绘生成失败，请检查 OpenAI API 配置")
+    
+    # 保存立绘
+    portrait_dir = UPLOAD_DIR / "characters" / char_id
+    portrait_dir.mkdir(parents=True, exist_ok=True)
+    portrait_file = portrait_dir / "portrait.png"
+    
+    if await save_image(portrait_image, portrait_file, "png"):
+        portrait_path = f"/static/uploads/characters/{char_id}/portrait.png"
+        character.portrait_path = portrait_path
+        character.updated_at = datetime.utcnow()
+        session.add(character)
+        await session.commit()
+        
+        return {"success": True, "portrait_path": portrait_path}
+    else:
+        raise HTTPException(status_code=500, detail="立绘保存失败")
+
+
 # ============== 场景模板管理 ==============
 
 @router.get("/locations")
@@ -573,6 +616,43 @@ async def upload_location_background(
     await session.commit()
     
     return {"success": True, "background_path": location.background_path}
+
+
+@router.post("/locations/{loc_id}/generate-background")
+async def generate_location_background_endpoint(
+    loc_id: str,
+    session: AsyncSession = Depends(get_session),
+    _: bool = Depends(verify_admin_token)
+):
+    """使用 AI 生成场景背景"""
+    location = await session.get(LocationTemplate, loc_id)
+    if not location:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    
+    # 生成背景
+    bg_image = await generate_scene_background(
+        location.name,
+        location.description or ""
+    )
+    
+    if not bg_image:
+        raise HTTPException(status_code=500, detail="背景生成失败，请检查 OpenAI API 配置")
+    
+    # 保存背景
+    bg_dir = UPLOAD_DIR / "locations" / loc_id
+    bg_dir.mkdir(parents=True, exist_ok=True)
+    bg_file = bg_dir / "background.jpg"
+    
+    if await save_image(bg_image, bg_file, "jpg"):
+        background_path = f"/static/uploads/locations/{loc_id}/background.jpg"
+        location.background_path = background_path
+        location.updated_at = datetime.utcnow()
+        session.add(location)
+        await session.commit()
+        
+        return {"success": True, "background_path": background_path}
+    else:
+        raise HTTPException(status_code=500, detail="背景保存失败")
 
 
 @router.get("/locations/{loc_id}/export")

@@ -10,11 +10,6 @@ from app.models.schemas import (
 )
 from app.db.session import engine, init_db
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.core.image_generator import (
-    generate_scene_background,
-    generate_character_portrait,
-    save_image
-)
 
 
 async def seed():
@@ -94,29 +89,8 @@ async def seed():
             location_templates.append(loc_template)
             session.add(loc_template)
             
-            # 生成背景图片
-            print(f"🎨 正在为「{loc_data['name']}」生成背景图片...")
-            bg_image = await generate_scene_background(
-                loc_data["name"],
-                loc_data["description"]
-            )
-            
-            background_path = None
-            if bg_image:
-                # 保存图片
-                bg_dir = Path("static/uploads/locations") / loc_template_id
-                bg_dir.mkdir(parents=True, exist_ok=True)
-                bg_file = bg_dir / "background.jpg"
-                if await save_image(bg_image, bg_file, "jpg"):
-                    background_path = f"/static/uploads/locations/{loc_template_id}/background.jpg"
-                    loc_template.background_path = background_path
-                    print(f"✅ 背景图片已保存: {background_path}")
-                else:
-                    print(f"⚠️  背景图片保存失败，使用默认路径")
-            else:
-                print(f"⚠️  背景图片生成失败，使用默认路径")
-                # 使用默认路径
-                background_path = f"/static/worlds/world_1/backgrounds/{loc_data['id']}.png"
+            # 背景图片路径（可在 admin UI 中生成）
+            background_path = f"/static/worlds/world_1/backgrounds/{loc_data['id']}.png"
             
             # 创建 Location（游戏运行时）
             location = Location(
@@ -207,29 +181,8 @@ async def seed():
             character_templates.append(char_template)
             session.add(char_template)
             
-            # 生成角色立绘
-            print(f"🎨 正在为「{npc_data['name']}」生成立绘...")
-            portrait_image = await generate_character_portrait(
-                npc_data["name"],
-                npc_data["description"],
-                npc_data["personality"]
-            )
-            
-            portrait_path = None
-            if portrait_image:
-                # 保存图片
-                portrait_dir = Path("static/uploads/characters") / char_template_id
-                portrait_dir.mkdir(parents=True, exist_ok=True)
-                portrait_file = portrait_dir / "portrait.png"
-                if await save_image(portrait_image, portrait_file, "png"):
-                    portrait_path = f"/static/uploads/characters/{char_template_id}/portrait.png"
-                    char_template.portrait_path = portrait_path
-                    print(f"✅ 立绘已保存: {portrait_path}")
-                else:
-                    print(f"⚠️  立绘保存失败，使用默认路径")
-            else:
-                print(f"⚠️  立绘生成失败，使用默认路径")
-                portrait_path = f"/static/worlds/world_1/npcs/{npc_data['id']}/default.png"
+            # 立绘路径（可在 admin UI 中生成）
+            portrait_path = f"/static/worlds/world_1/npcs/{npc_data['id']}/default.png"
             
             # 创建 NPC（游戏运行时）
             npc = NPC(

@@ -12,7 +12,20 @@ import aiofiles
 load_dotenv()
 
 MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() == "true"
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")) if not MOCK_MODE else None
+# 支持本地 LLM：如果 LOCAL_LLM 不为空，使用本地 API；否则使用 OpenAI
+LOCAL_LLM = os.getenv("LOCAL_LLM", "").strip()
+if not MOCK_MODE:
+    if LOCAL_LLM:
+        # 使用本地 LLM API（假设格式兼容 OpenAI）
+        client = AsyncOpenAI(
+            api_key=os.getenv("OPENAI_API_KEY", "not-needed"),  # 本地 LLM 可能不需要 key
+            base_url=LOCAL_LLM
+        )
+    else:
+        # 使用 OpenAI API
+        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+else:
+    client = None
 
 
 async def generate_image(
