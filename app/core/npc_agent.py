@@ -5,13 +5,41 @@ from sqlmodel import select
 from typing import List, Dict, Optional
 import time
 
-from app.models.schemas import NPC, Player, World, Location, Conversation, GameEvent
+from app.models.schemas import NPC, Player, World, Location, Conversation, GameEvent, CharacterTemplate
 from app.core.ai import generate_npc_response
 
 
 class NPCAgent:
     def __init__(self, session: AsyncSession):
         self.session = session
+    
+    async def _get_npc_data(self, npc: NPC) -> Dict:
+        """
+        获取 NPC 的完整数据，优先从模板获取
+        """
+        if npc.template_id:
+            template = await self.session.get(CharacterTemplate, npc.template_id)
+            if template:
+                return {
+                    "name": template.name,
+                    "description": template.description,
+                    "personality": template.personality,
+                    "portrait_url": template.portrait_path,
+                    "first_message": template.first_message,
+                    "scenario": template.scenario,
+                    "example_dialogs": template.example_dialogs or [],
+                }
+        
+        # 使用 NPC 自身数据
+        return {
+            "name": npc.name or "未知",
+            "description": npc.description or "",
+            "personality": npc.personality or "",
+            "portrait_url": npc.portrait_url,
+            "first_message": npc.first_message,
+            "scenario": npc.scenario,
+            "example_dialogs": npc.example_dialogs or [],
+        }
     
     async def get_conversation_history(
         self, 
@@ -66,9 +94,12 @@ Current atmosphere: {world.current_mood}"""
         if not npc:
             return {"error": "NPC not found"}
         
+        # 获取 NPC 的完整数据（从模板或自身）
+        npc_data = await self._get_npc_data(npc)
+        
         # 检查 NPC 是否在同一地点
         if npc.location_id != player.location_id:
-            return {"error": f"{npc.name} is not here."}
+            return {"error": f"{npc_data['name']} is not here."}
         
         # 获取同地点的其他 NPC
         statement = select(NPC).where(NPC.location_id == location.id)
@@ -81,13 +112,13 @@ Current atmosphere: {world.current_mood}"""
         # 构建世界上下文
         world_context = await self.build_world_context(world, location, npcs_here)
         
-        # 生成 NPC 回复
+        # 生成 NPC 回复（使用模板数据）
         response = await generate_npc_response(
-            npc_name=npc.name,
-            npc_personality=npc.personality,
-            npc_description=npc.description,
-            scenario=npc.scenario,
-            example_dialogs=npc.example_dialogs or [],
+            npc_name=npc_data["name"],
+            npc_personality=npc_data["personality"],
+            npc_description=npc_data["description"],
+            scenario=npc_data["scenario"],
+            example_dialogs=npc_data["example_dialogs"],
             conversation_history=history,
             player_message=player_message,
             world_context=world_context
@@ -132,7 +163,7 @@ Current atmosphere: {world.current_mood}"""
             content=response.get("response", "..."),
             extra_data={
                 "npc_id": npc_id,
-                "npc_name": npc.name,
+                "npc_name": npc_data["name"],
                 "player_message": player_message,
                 "emotion": new_emotion,
                 "mood": world.current_mood
@@ -143,11 +174,11 @@ Current atmosphere: {world.current_mood}"""
         await self.session.commit()
         
         return {
-            "npc_name": npc.name,
+            "npc_name": npc_data["name"],
             "response": response.get("response", "..."),
             "emotion": new_emotion,
             "relationship": npc.relationship,
-            "portrait_url": self._get_portrait_url(npc, new_emotion),
+            "portrait_url": npc_data["portrait_url"],
             "mood": world.current_mood
         }
     
@@ -170,7 +201,10 @@ Current atmosphere: {world.current_mood}"""
         # 检查是否有对话历史
         history = await self.get_conversation_history(world_id, npc_id, player_id, limit=1)
         
-        if not history and npc.first_message:
-            return npc.first_message
+        if not history:
+            # 从模板或 NPC 自身获取 first_message
+            npc_data = await self._get_npc_data(npc)
+            if npc_data.get("first_message"):
+                return npc_data["first_message"]
         
         return None

@@ -12,7 +12,7 @@ from app.core.judge import ActionJudge
 from app.core.checkpoint import CheckpointManager
 from app.core.npc_manager import NPCManager, spawn_npcs_for_scene
 from app.models.schemas import (
-    World, Location, Player, NPC, GameEvent,
+    World, Location, Player, NPC, GameEvent, CharacterTemplate,
     Choice, ChoicesResponse, ActionResult, JudgeResult
 )
 
@@ -54,6 +54,62 @@ class CheckpointRequest(BaseModel):
 
 
 # ============== Helper Functions ==============
+
+async def _get_npc_display_data(npc: NPC, session: AsyncSession) -> dict:
+    """
+    获取 NPC 的显示数据，优先从模板获取（如果有 template_id）
+    这样修改模板后，NPC 数据会自动更新
+    """
+    # 如果有 template_id，从模板获取最新数据
+    if npc.template_id:
+        template = await session.get(CharacterTemplate, npc.template_id)
+        if template:
+            return {
+                "name": template.name,  # 优先使用模板的名字
+                "description": template.description,
+                "personality": template.personality,
+                "portrait_url": template.portrait_path,
+                "first_message": template.first_message,
+                "scenario": template.scenario,
+                "example_dialogs": template.example_dialogs or [],
+            }
+    
+    # 没有 template_id 或模板不存在，使用 NPC 自身的数据
+    return {
+        "name": npc.name,
+        "description": npc.description,
+        "personality": npc.personality,
+        "portrait_url": npc.portrait_url,
+        "first_message": npc.first_message,
+        "scenario": npc.scenario,
+        "example_dialogs": npc.example_dialogs or [],
+    }
+
+
+async def _build_npc_list(
+    npcs: List[NPC],
+    session: AsyncSession,
+    first_messages: dict,
+    character_positions: dict
+) -> List[dict]:
+    """构建 NPC 列表，从模板动态获取数据"""
+    result = []
+    for npc in npcs:
+        display_data = await _get_npc_display_data(npc, session)
+        result.append({
+            "id": npc.id,
+            "name": display_data["name"],
+            "description": display_data["description"],
+            "portrait_url": display_data["portrait_url"],
+            # 运行时状态（始终从 NPC 实例获取）
+            "emotion": npc.current_emotion,
+            "relationship": npc.relationship,
+            "first_message": first_messages.get(npc.id) or display_data.get("first_message"),
+            # 优先使用 AI 决定的位置，否则用数据库中的默认值
+            "position": character_positions.get(npc.id, npc.position)
+        })
+    return result
+
 
 def _calculate_player_position(npcs: List[NPC]) -> str:
     """
@@ -144,20 +200,7 @@ async def get_world_state(
             "background_url": location.background_url,
             "connections": location.connections
         },
-        "npcs": [
-            {
-                "id": npc.id,
-                "name": npc.name,
-                "description": npc.description,
-                "emotion": npc.current_emotion,
-                "relationship": npc.relationship,
-                "portrait_url": npc.portrait_url,
-                "first_message": first_messages.get(npc.id),
-                # 优先使用 AI 决定的位置，否则用数据库中的默认值
-                "position": character_positions.get(npc.id, npc.position)
-            }
-            for npc in npcs
-        ],
+        "npcs": await _build_npc_list(npcs, session, first_messages, character_positions),
         "player": {
             "id": player.id,
             "name": player.name,

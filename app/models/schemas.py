@@ -32,15 +32,19 @@ class Location(SQLModel, table=True):
 class NPC(SQLModel, table=True):
     id: str = Field(primary_key=True)
     world_id: str = Field(foreign_key="world.id")
-    name: str
-    description: str
-    personality: str
     location_id: str = Field(foreign_key="location.id")
+    # 关联的角色模板 ID（如果有，优先从模板获取数据）
+    template_id: Optional[str] = None
+    # 以下字段可被模板覆盖，或独立设置
+    name: str = ""  # 如果为空，从模板获取
+    description: str = ""
+    personality: str = ""
     portrait_url: Optional[str] = None
     # Chub.ai 角色卡字段
     first_message: Optional[str] = None  # NPC 首次见面的开场白
     scenario: Optional[str] = None       # NPC 的背景故事/情境
     example_dialogs: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # ========== 以下是运行时状态（不从模板继承）==========
     # 当前情绪状态
     current_emotion: str = "default"  # default, happy, angry, sad, surprised
     # 与玩家的关系值 (-100 到 100)

@@ -310,8 +310,12 @@ class NPCManager:
         template_id: str,
         customizations: Dict[str, Any] = None
     ) -> Optional[NPC]:
-        """从角色模板创建 NPC 实例"""
+        """
+        从角色模板创建 NPC 实例
         
+        NPC 通过 template_id 引用模板，大部分数据从模板动态获取
+        只有运行时状态（emotion, relationship, position）存储在 NPC 表
+        """
         template = await self.session.get(CharacterTemplate, template_id)
         if not template:
             return None
@@ -322,17 +326,18 @@ class NPCManager:
         npc = NPC(
             id=npc_id,
             world_id=world_id,
-            name=customizations.get("name") or template.name,
-            description=template.description,
-            personality=template.personality + (
-                f"\n{customizations.get('personality_addition', '')}"
-                if customizations.get('personality_addition') else ""
-            ),
             location_id=location_id,
-            portrait_url=template.portrait_path,
-            first_message=template.first_message,
-            scenario=template.scenario,
-            example_dialogs=template.example_dialogs or [],
+            # 关键：存储 template_id，后续通过 ID 动态获取数据
+            template_id=template_id,
+            # 以下字段可选覆盖（如果 AI 给了自定义名字）
+            name=customizations.get("name", ""),  # 空字符串表示使用模板名字
+            description="",  # 从模板获取
+            personality=customizations.get('personality_addition', ""),  # 额外性格补充
+            portrait_url=None,  # 从模板获取
+            first_message=None,  # 从模板获取
+            scenario=None,  # 从模板获取
+            example_dialogs=[],  # 从模板获取
+            # 运行时状态
             current_emotion="default",
             relationship=0,
             position="center"
@@ -350,8 +355,12 @@ class NPCManager:
         location_id: str,
         character_data: Dict[str, Any]
     ) -> Optional[NPC]:
-        """创建全新的 NPC（同时保存到角色库）"""
+        """
+        创建全新的 NPC（同时保存到角色库）
         
+        1. 创建 CharacterTemplate 保存到角色库
+        2. 创建 NPC 实例，通过 template_id 引用模板
+        """
         # 先创建角色模板（保存到角色库供后续使用）
         template_id = f"char_{uuid.uuid4().hex[:8]}"
         template = CharacterTemplate(
@@ -367,19 +376,22 @@ class NPCManager:
         )
         self.session.add(template)
         
-        # 创建 NPC 实例
+        # 创建 NPC 实例，通过 template_id 引用模板
         npc_id = f"npc_{uuid.uuid4().hex[:8]}"
         npc = NPC(
             id=npc_id,
             world_id=world_id,
-            name=character_data.get("name", "未命名"),
-            description=character_data.get("description", ""),
-            personality=character_data.get("personality", ""),
             location_id=location_id,
-            portrait_url=None,  # 新创建的角色暂无立绘
-            first_message=character_data.get("first_message"),
+            template_id=template_id,  # 关键：引用模板
+            # 以下字段为空，从模板动态获取
+            name="",
+            description="",
+            personality="",
+            portrait_url=None,
+            first_message=None,
             scenario=None,
             example_dialogs=[],
+            # 运行时状态
             current_emotion="default",
             relationship=0,
             position="center"
