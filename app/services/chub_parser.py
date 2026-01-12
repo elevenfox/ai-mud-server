@@ -101,6 +101,37 @@ def extract_chara_from_png(png_data: bytes) -> Optional[Dict[str, Any]]:
         return None
 
 
+def extract_location_from_png(png_data: bytes) -> Optional[Dict[str, Any]]:
+    """从 PNG 文件中提取场景卡数据
+    
+    Args:
+        png_data: PNG 文件的二进制数据
+        
+    Returns:
+        场景卡 JSON 数据，如果不存在则返回 None
+    """
+    try:
+        chunks = read_png_chunks(png_data)
+        
+        for chunk in chunks:
+            if chunk['type'] == 'tEXt':
+                # tEXt chunk 格式: keyword\0text
+                data = chunk['data']
+                null_pos = data.find(b'\x00')
+                if null_pos != -1:
+                    keyword = data[:null_pos].decode('latin-1')
+                    if keyword == 'location':
+                        text = data[null_pos+1:].decode('latin-1')
+                        # Base64 解码
+                        json_data = base64.b64decode(text).decode('utf-8')
+                        return json.loads(json_data)
+        
+        return None
+    except Exception as e:
+        print(f"Error extracting location data: {e}")
+        return None
+
+
 def embed_chara_to_png(png_data: bytes, chara_data: Dict[str, Any]) -> bytes:
     """将角色卡数据嵌入到 PNG 文件中
     
@@ -165,6 +196,76 @@ def embed_chara_to_png(png_data: bytes, chara_data: Dict[str, Any]) -> bytes:
     json_str = json.dumps(chara_data, ensure_ascii=False)
     base64_data = base64.b64encode(json_str.encode('utf-8')).decode('latin-1')
     text_data = b'chara\x00' + base64_data.encode('latin-1')
+    
+    # 在最后一个 IEND 之前插入 tEXt chunk
+    iend_index = iend_indices[-1]
+    chunks.insert(iend_index, {'type': 'tEXt', 'data': text_data})
+    
+    return write_png_chunks(chunks)
+
+
+def embed_location_to_png(png_data: bytes, location_data: Dict[str, Any]) -> bytes:
+    """将场景卡数据嵌入到 PNG 文件中
+    
+    Args:
+        png_data: 原始 PNG 文件的二进制数据（或 JPG，会自动转换）
+        location_data: 场景卡 JSON 数据
+        
+    Returns:
+        带有嵌入数据的新 PNG 文件二进制数据
+    """
+    # 检查是否为 PNG 格式
+    is_png = png_data.startswith(b'\x89PNG\r\n\x1a\n')
+    
+    if not is_png:
+        # 可能是 JPG 或其他格式，尝试转换为 PNG
+        try:
+            from PIL import Image
+            from io import BytesIO
+        except ImportError:
+            raise ValueError(
+                "PIL/Pillow not installed. Cannot convert non-PNG images to PNG. "
+                "Please install Pillow: pip install Pillow"
+            )
+        
+        try:
+            img = Image.open(BytesIO(png_data))
+            # 转换为 RGB（如果是 RGBA）
+            if img.mode in ('RGBA', 'LA', 'P'):
+                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'P':
+                    img = img.convert('RGBA')
+                rgb_img.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                img = rgb_img
+            
+            # 转换为 PNG bytes
+            png_buffer = BytesIO()
+            img.save(png_buffer, format='PNG')
+            png_data = png_buffer.getvalue()
+        except Exception as e:
+            raise ValueError(f"无法转换图片格式: {e}")
+    
+    # 读取 PNG chunks
+    chunks = read_png_chunks(png_data)
+    
+    # 查找 IEND chunk
+    iend_indices = [i for i, c in enumerate(chunks) if c['type'] == 'IEND']
+    
+    if not iend_indices:
+        raise ValueError("Invalid PNG file: missing IEND chunk")
+    
+    # 移除已有的 location tEXt chunk
+    chunks = [c for c in chunks if not (c['type'] == 'tEXt' and c['data'].startswith(b'location\x00'))]
+    
+    # 重新查找 IEND（因为可能被移除了）
+    iend_indices = [i for i, c in enumerate(chunks) if c['type'] == 'IEND']
+    if not iend_indices:
+        raise ValueError("Invalid PNG file: missing IEND chunk after cleanup")
+    
+    # 创建新的 tEXt chunk
+    json_str = json.dumps(location_data, ensure_ascii=False)
+    base64_data = base64.b64encode(json_str.encode('utf-8')).decode('latin-1')
+    text_data = b'location\x00' + base64_data.encode('latin-1')
     
     # 在最后一个 IEND 之前插入 tEXt chunk
     iend_index = iend_indices[-1]

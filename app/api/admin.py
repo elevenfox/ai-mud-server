@@ -387,6 +387,62 @@ async def list_locations(
     }
 
 
+@router.post("/locations/import", response_model=Dict[str, Any])
+async def import_location_png(
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    _: bool = Depends(verify_admin_token)
+):
+    """从 PNG 导入场景"""
+    if not file.filename.lower().endswith('.png'):
+        raise HTTPException(status_code=400, detail="只支持 PNG 文件")
+    
+    # 读取文件
+    content = await file.read()
+    
+    # 提取元数据
+    from app.services.chub_parser import extract_location_from_png, parse_location_card
+    
+    location_data = extract_location_from_png(content)
+    if not location_data:
+        raise HTTPException(status_code=400, detail="PNG 文件中没有找到场景卡数据")
+    
+    # 解析场景卡
+    parsed = parse_location_card(location_data)
+    
+    # 保存图片
+    loc_id = f"loc_{uuid.uuid4().hex[:8]}"
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    bg_dir = UPLOAD_DIR / "locations" / loc_id
+    bg_dir.mkdir(parents=True, exist_ok=True)
+    bg_path = bg_dir / "background.png"
+    bg_path.write_bytes(content)
+    
+    # 创建数据库记录
+    location = LocationTemplate(
+        id=loc_id,
+        name=parsed['name'],
+        description=parsed['description'],
+        tags=parsed['tags'],
+        background_path=f"/static/uploads/locations/{loc_id}/background.png",
+        default_connections=parsed.get('default_connections', []),
+        is_starting_location=False,
+        raw_card_data=parsed['raw_card_data'],
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    
+    session.add(location)
+    await session.commit()
+    
+    return {
+        "success": True,
+        "id": loc_id,
+        "name": parsed['name'],
+        "message": f"成功导入场景: {parsed['name']}"
+    }
+
+
 @router.post("/locations")
 async def create_location(
     data: LocationTemplateCreate,
