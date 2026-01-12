@@ -312,8 +312,8 @@ async def export_character_png(
     session.add(character)
     await session.commit()
     
-    # 嵌入元数据
-    output_png = embed_chara_to_png(png_data, card_data)
+    # 嵌入元数据（使用 location key）
+    output_png = embed_location_to_png(png_data, card_data)
     
     # 对中文文件名进行 URL 编码，使用 RFC 5987 规范
     filename_encoded = quote(f"{character.name}.png")
@@ -612,8 +612,8 @@ async def export_location_png(
     session.add(location)
     await session.commit()
     
-    # 嵌入元数据
-    output_png = embed_chara_to_png(png_data, card_data)
+    # 嵌入元数据（使用 location key）
+    output_png = embed_location_to_png(png_data, card_data)
     
     # 对中文文件名进行 URL 编码
     filename_encoded = quote(f"{location.name}.png")
