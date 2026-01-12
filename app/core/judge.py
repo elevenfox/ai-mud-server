@@ -16,19 +16,31 @@ class ActionJudge:
     async def get_physical_constraints(self, location: Location, player: Player, npcs: List[NPC]) -> List[str]:
         """获取当前环境的物理约束"""
         constraints = [
-            f"Player is in {location.name}",
-            f"Player inventory: {', '.join(player.inventory) or 'empty'}",
+            f"玩家在 {location.name}",
+            f"玩家物品: {', '.join(player.inventory) or '空'}",
         ]
         
-        if location.connections:
-            constraints.append(f"Connected locations: {', '.join(location.connections)}")
+        # 获取可访问场景的详细信息
+        from sqlmodel import select
+        statement = select(Location).where(Location.world_id == player.world_id)
+        results = await self.session.execute(statement)
+        all_locations = list(results.scalars().all())
+        
+        connected_names = []
+        for loc in all_locations:
+            if loc.id in location.connections:
+                connected_names.append(loc.name)
+        
+        if connected_names:
+            constraints.append(f"可前往的场景: {', '.join(connected_names)}")
+            constraints.append("玩家可以通过说「去 [场景名]」或「前往 [场景名]」来切换场景")
         else:
-            constraints.append("No exits from current location")
+            constraints.append("当前场景没有可前往的其他场景")
         
         if npcs:
-            constraints.append(f"NPCs present: {', '.join([n.name for n in npcs])}")
+            constraints.append(f"场景中的 NPC: {', '.join([n.name for n in npcs])}")
         else:
-            constraints.append("No NPCs present")
+            constraints.append("场景中没有 NPC")
         
         return constraints
     
@@ -113,13 +125,134 @@ WORLD FLAGS: {world.flags}"""
         player = await self.session.get(Player, player_id)
         location = await self.session.get(Location, player.location_id)
         
+        # 检测场景切换意图
+        movement_keywords = ['去', '前往', '进入', '传送到', '走到', '移动到', 'go to', 'move to', 'enter', 'teleport to']
+        action_lower = action_text.lower()
+        
+        # 检查是否包含移动关键词
+        is_movement = any(keyword in action_lower for keyword in movement_keywords)
+        
+        # 如果检测到移动意图，尝试解析目标场景
+        if is_movement:
+            # 获取所有场景
+            statement = select(Location).where(Location.world_id == world_id)
+            results = await self.session.execute(statement)
+            all_locations = list(results.scalars().all())
+            
+            # 尝试匹配目标场景名称
+            target_location = None
+            for loc in all_locations:
+                # 检查场景名称是否在输入中（支持部分匹配）
+                loc_name_lower = loc.name.lower()
+                # 检查完整名称或部分匹配
+                if (loc.name in action_text or 
+                    loc_name_lower in action_lower or
+                    any(word in action_text for word in loc.name.split()) if len(loc.name) > 2 else False):
+                    # 检查是否在连接列表中（允许传送到任意场景，暂时不限制）
+                    # 如果场景在连接列表中，或者允许传送到任意场景
+                    if loc.id in location.connections:
+                        target_location = loc
+                        break
+                    # 如果不在连接列表中，但用户明确指定了场景名，也允许（传送到任意场景）
+                    elif loc.name in action_text:
+                        target_location = loc
+                        break
+            
+            # 如果找到目标场景且不是当前场景，执行切换
+            if target_location and target_location.id != location.id:
+                # 保存原场景信息
+                from_location = location
+                to_location = target_location
+                
+                # 更新玩家位置
+                player.location_id = to_location.id
+                self.session.add(player)
+                await self.session.commit()
+                
+                # 生成场景切换叙事
+                from app.core.ai import generate_json
+                
+                system_prompt = """你是一个 MUD 游戏的叙事者。请用中文回复。
+玩家从一个场景移动到另一个场景，请描述移动过程和到达新场景的感受。
+要生动但简洁，包含感官细节。
+
+用 JSON 格式回复:
+{
+    "narrative": "叙事文本（描述移动过程和到达新场景）",
+    "currency_change": 0,
+    "gems_change": 0
+}"""
+                
+                # 获取新场景的 NPC
+                statement = select(NPC).where(NPC.location_id == to_location.id)
+                results = await self.session.execute(statement)
+                npcs = list(results.scalars().all())
+                
+                npc_info = ""
+                if npcs:
+                    npc_info = f"\n场景中的 NPC: {', '.join([n.name for n in npcs])}"
+                
+                user_prompt = f"""玩家从「{from_location.name}」移动到「{to_location.name}」。
+
+原场景: {from_location.name} - {from_location.description}
+新场景: {to_location.name} - {to_location.description}
+{npc_info}
+
+请描述玩家如何从原场景移动到新场景，以及到达新场景后的第一印象。"""
+                
+                result = await generate_json(system_prompt, user_prompt)
+                narrative = result.get("narrative", f"你来到了{to_location.name}。")
+                
+                # 记录事件
+                event = GameEvent(
+                    world_id=world_id,
+                    timestamp=int(time.time()),
+                    event_type="move",
+                    content=narrative,
+                    extra_data={
+                        "from": from_location.id,
+                        "to": to_location.id,
+                        "action": action_text
+                    }
+                )
+                self.session.add(event)
+                await self.session.commit()
+                
+                return ActionResult(
+                    success=True,
+                    narrative=narrative,
+                    mood=world.current_mood,
+                    location_changed=True,
+                    new_location=to_location.id,
+                    currency_change=result.get("currency_change", 0),
+                    gems_change=result.get("gems_change", 0)
+                )
+        
         # 获取当前地点的 NPC
         statement = select(NPC).where(NPC.location_id == location.id)
         results = await self.session.execute(statement)
         npcs = list(results.scalars().all())
         
+        # 获取可访问的场景列表
+        statement = select(Location).where(Location.world_id == world_id)
+        results = await self.session.execute(statement)
+        all_locations = list(results.scalars().all())
+        
+        # 构建可访问场景信息（包含场景名称和描述）
+        accessible_locations = []
+        for loc in all_locations:
+            if loc.id in location.connections:
+                accessible_locations.append(f"{loc.name}: {loc.description[:50]}...")
+        
+        location_info = ""
+        if accessible_locations:
+            location_info = f"\n\n可访问的场景:\n{chr(10).join(f'- {loc}' for loc in accessible_locations)}\n\n提示：玩家可以通过说「去 [场景名]」或「前往 [场景名]」来切换场景。"
+        else:
+            location_info = "\n\n当前场景没有直接连接的其他场景。"
+        
         # 生成行动结果叙事（包含货币变化）
         situation = await self.build_situation_context(world, location, player, npcs)
+        situation += location_info
         
         # 构建经济系统信息
         economy_info = f"""
