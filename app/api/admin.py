@@ -288,8 +288,9 @@ async def export_character_png(
     else:
         raise HTTPException(status_code=400, detail="该角色没有立绘")
     
-    # 创建角色卡数据
-    card_data = character.raw_card_data or create_character_card(
+    # 始终使用当前数据库中的最新数据创建角色卡（而不是可能过时的 raw_card_data）
+    # 这样导出的文件总是包含最新的编辑信息
+    card_data = create_character_card(
         name=character.name,
         description=character.description,
         personality=character.personality,
@@ -298,6 +299,12 @@ async def export_character_png(
         example_dialogs=character.example_dialogs or [],
         tags=character.tags or [],
     )
+    
+    # 可选：更新 raw_card_data 以便下次导入时保持一致
+    # 但导出时始终使用最新数据
+    character.raw_card_data = card_data
+    session.add(character)
+    await session.commit()
     
     # 嵌入元数据
     output_png = embed_chara_to_png(png_data, card_data)
@@ -529,14 +536,19 @@ async def export_location_png(
     else:
         raise HTTPException(status_code=400, detail="该场景没有背景图片")
     
-    # 创建场景卡数据
-    card_data = location.raw_card_data or create_location_card(
+    # 始终使用当前数据库中的最新数据创建场景卡（而不是可能过时的 raw_card_data）
+    card_data = create_location_card(
         name=location.name,
         description=location.description,
         tags=location.tags or [],
         default_connections=location.default_connections or [],
         default_characters=location.default_characters or [],
     )
+    
+    # 可选：更新 raw_card_data 以便下次导入时保持一致
+    location.raw_card_data = card_data
+    session.add(location)
+    await session.commit()
     
     # 嵌入元数据
     output_png = embed_chara_to_png(png_data, card_data)
