@@ -189,6 +189,9 @@ class ActionResult(BaseModel):
     npc_emotion: Optional[str] = None
     location_changed: bool = False
     new_location: Optional[str] = None
+    # 经济系统变化
+    currency_change: int = 0  # 货币变化（正数=获得，负数=消费）
+    gems_change: int = 0  # 宝石变化（正数=获得，负数=消费）
 
 
 class JudgeResult(BaseModel):
