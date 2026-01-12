@@ -75,7 +75,8 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.7,
-            response_format={"type": "json_object"}
+            # 部分本地 LLM 不支持 response_format，400 错误时请检查此处
+            response_format={"type": "json_object"} if not LOCAL_LLM else None
         )
         return json.loads(response.choices[0].message.content)
     except Exception as e:
@@ -160,7 +161,8 @@ async def generate_npc_response(
         model=os.getenv("OPENAI_MODEL", "gpt-4o"),
         messages=messages,
         temperature=0.8,
-        response_format={"type": "json_object"}
+        # 本地 LLM 可能不支持 response_format
+        response_format={"type": "json_object"} if not LOCAL_LLM else None
     )
     return json.loads(response.choices[0].message.content)
 
@@ -410,6 +412,7 @@ async def judge_action(
             {"role": "user", "content": user_prompt}
         ],
         temperature=0.3,  # 低温度，更确定性
-        response_format={"type": "json_object"}
+        # 本地 LLM 可能不支持 response_format
+        response_format={"type": "json_object"} if not LOCAL_LLM else None
     )
     return json.loads(response.choices[0].message.content)
