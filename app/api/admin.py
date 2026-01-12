@@ -7,6 +7,7 @@ import secrets
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Header
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
@@ -301,11 +302,13 @@ async def export_character_png(
     # 嵌入元数据
     output_png = embed_chara_to_png(png_data, card_data)
     
+    # 对中文文件名进行 URL 编码，使用 RFC 5987 规范
+    filename_encoded = quote(f"{character.name}.png")
     return Response(
         content=output_png,
         media_type="image/png",
         headers={
-            "Content-Disposition": f'attachment; filename="{character.name}.png"'
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}"
         }
     )
 
@@ -538,11 +541,13 @@ async def export_location_png(
     # 嵌入元数据
     output_png = embed_chara_to_png(png_data, card_data)
     
+    # 对中文文件名进行 URL 编码
+    filename_encoded = quote(f"{location.name}.png")
     return Response(
         content=output_png,
         media_type="image/png",
         headers={
-            "Content-Disposition": f'attachment; filename="{location.name}.png"'
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}"
         }
     )
 
