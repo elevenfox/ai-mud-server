@@ -210,6 +210,9 @@ def parse_character_card(chara_data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             example_dialogs = [mes_example.strip()]
     
+    # 从 extensions 中提取自定义字段（性别、年龄、职业）
+    extensions = data.get('extensions', {}) or {}
+    
     return {
         'name': data.get('name', 'Unknown'),
         'description': data.get('description', ''),
@@ -218,6 +221,10 @@ def parse_character_card(chara_data: Dict[str, Any]) -> Dict[str, Any]:
         'scenario': data.get('scenario', ''),
         'example_dialogs': example_dialogs,
         'tags': data.get('tags', []),
+        # 从 extensions 中提取角色属性
+        'gender': extensions.get('gender') or data.get('gender'),
+        'age': extensions.get('age') or data.get('age'),
+        'occupation': extensions.get('occupation') or data.get('occupation'),
         'raw_card_data': chara_data,  # 保留原始数据用于导出
     }
 
@@ -230,9 +237,19 @@ def create_character_card(
     scenario: str = "",
     example_dialogs: list = None,
     tags: list = None,
+    gender: Optional[str] = None,
+    age: Optional[int] = None,
+    occupation: Optional[str] = None,
     **kwargs
 ) -> Dict[str, Any]:
     """创建 Character Card V2 格式的数据
+    
+    Args:
+        name, description, personality, etc.: 标准字段
+        gender: 性别 (male, female, other, unknown)
+        age: 年龄
+        occupation: 职业/身份
+        **kwargs: 其他扩展字段
     
     Returns:
         可用于嵌入 PNG 的角色卡数据
@@ -241,6 +258,17 @@ def create_character_card(
     mes_example = ""
     if example_dialogs:
         mes_example = "\n<START>\n".join(example_dialogs)
+    
+    # 构建 extensions，包含自定义字段
+    extensions = {
+        **kwargs,
+    }
+    if gender:
+        extensions['gender'] = gender
+    if age is not None:
+        extensions['age'] = age
+    if occupation:
+        extensions['occupation'] = occupation
     
     return {
         "spec": "chara_card_v2",
@@ -259,7 +287,7 @@ def create_character_card(
             "tags": tags or [],
             "creator": "AI MUD",
             "character_version": "1.0",
-            "extensions": kwargs
+            "extensions": extensions
         }
     }
 

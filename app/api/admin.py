@@ -171,6 +171,9 @@ async def import_character_png(
         scenario=parsed['scenario'],
         example_dialogs=parsed['example_dialogs'],
         tags=parsed['tags'],
+        gender=parsed.get('gender'),
+        age=parsed.get('age'),
+        occupation=parsed.get('occupation'),
         raw_card_data=parsed['raw_card_data'],
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
@@ -298,6 +301,9 @@ async def export_character_png(
         scenario=character.scenario or "",
         example_dialogs=character.example_dialogs or [],
         tags=character.tags or [],
+        gender=character.gender,
+        age=character.age,
+        occupation=character.occupation,
     )
     
     # 可选：更新 raw_card_data 以便下次导入时保持一致

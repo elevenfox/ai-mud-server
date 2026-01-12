@@ -116,6 +116,10 @@ class CharacterTemplate(SQLModel, table=True):
     example_dialogs: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     # 标签/分类
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # ========== 角色属性 ==========
+    gender: Optional[str] = None  # 性别：male, female, other, unknown
+    age: Optional[int] = None  # 年龄
+    occupation: Optional[str] = None  # 职业/身份
     # 是否可作为玩家 Avatar 选择
     is_player_avatar: bool = False
     # 初始属性（用于玩家 Avatar）
@@ -210,6 +214,9 @@ class CharacterTemplateCreate(BaseModel):
     scenario: Optional[str] = None
     example_dialogs: List[str] = []
     tags: List[str] = []
+    gender: Optional[str] = None  # male, female, other, unknown
+    age: Optional[int] = None
+    occupation: Optional[str] = None
     is_player_avatar: bool = False
     initial_attributes: Dict[str, Any] = {}
 
@@ -223,6 +230,9 @@ class CharacterTemplateUpdate(BaseModel):
     scenario: Optional[str] = None
     example_dialogs: Optional[List[str]] = None
     tags: Optional[List[str]] = None
+    gender: Optional[str] = None
+    age: Optional[int] = None
+    occupation: Optional[str] = None
     is_player_avatar: Optional[bool] = None
     initial_attributes: Optional[Dict[str, Any]] = None
 
