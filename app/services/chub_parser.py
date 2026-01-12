@@ -112,12 +112,20 @@ def embed_chara_to_png(png_data: bytes, chara_data: Dict[str, Any]) -> bytes:
         带有嵌入数据的新 PNG 文件二进制数据
     """
     # 检查是否为 PNG 格式
-    if not png_data.startswith(b'\x89PNG\r\n\x1a\n'):
+    is_png = png_data.startswith(b'\x89PNG\r\n\x1a\n')
+    
+    if not is_png:
         # 可能是 JPG 或其他格式，尝试转换为 PNG
         try:
             from PIL import Image
             from io import BytesIO
-            
+        except ImportError:
+            raise ValueError(
+                "PIL/Pillow not installed. Cannot convert non-PNG images to PNG. "
+                "Please install Pillow: pip install Pillow"
+            )
+        
+        try:
             img = Image.open(BytesIO(png_data))
             # 转换为 RGB（如果是 RGBA）
             if img.mode in ('RGBA', 'LA', 'P'):
@@ -131,12 +139,14 @@ def embed_chara_to_png(png_data: bytes, chara_data: Dict[str, Any]) -> bytes:
             png_buffer = BytesIO()
             img.save(png_buffer, format='PNG')
             png_data = png_buffer.getvalue()
-        except ImportError:
-            raise ValueError("PIL/Pillow not installed. Cannot convert non-PNG images.")
         except Exception as e:
             raise ValueError(f"Failed to convert image to PNG: {e}")
     
-    chunks = read_png_chunks(png_data)
+    # 尝试读取 PNG chunks
+    try:
+        chunks = read_png_chunks(png_data)
+    except Exception as e:
+        raise ValueError(f"Failed to read PNG chunks: {e}. The file may be corrupted or not a valid PNG.")
     
     # 检查是否有 IEND chunk
     iend_indices = [i for i, c in enumerate(chunks) if c['type'] == 'IEND']
