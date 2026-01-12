@@ -11,6 +11,7 @@ from app.core.choice_generator import ChoiceGenerator
 from app.core.judge import ActionJudge
 from app.core.checkpoint import CheckpointManager
 from app.core.npc_manager import NPCManager, spawn_npcs_for_scene
+from app.core.portrait_manager import get_npc_portrait_url, update_character_portrait_by_prompt
 from app.models.schemas import (
     World, Location, Player, NPC, GameEvent, CharacterTemplate,
     Choice, ChoicesResponse, ActionResult, JudgeResult
@@ -92,15 +93,25 @@ async def _build_npc_list(
     first_messages: dict,
     character_positions: dict
 ) -> List[dict]:
-    """构建 NPC 列表，从模板动态获取数据"""
+    """构建 NPC 列表，从模板动态获取数据，支持动态立绘"""
     result = []
     for npc in npcs:
         display_data = await _get_npc_display_data(npc, session)
+        
+        # 根据当前情绪获取动态立绘
+        emotion_prompt = f"{display_data['name']} 当前情绪是 {npc.current_emotion}"
+        dynamic_portrait = await get_npc_portrait_url(
+            session,
+            npc,
+            prompt=emotion_prompt if npc.current_emotion != "default" else None
+        )
+        
         result.append({
             "id": npc.id,
             "name": display_data["name"],
             "description": display_data["description"],
-            "portrait_url": display_data["portrait_url"],
+            "personality": display_data.get("personality", ""),
+            "portrait_url": dynamic_portrait or display_data["portrait_url"],
             # 运行时状态（始终从 NPC 实例获取）
             "emotion": npc.current_emotion,
             "relationship": npc.relationship,
@@ -325,7 +336,7 @@ async def talk_to_npc(
     request: TalkRequest,
     session: AsyncSession = Depends(get_session)
 ):
-    """与 NPC 对话"""
+    """与 NPC 对话（支持动态立绘更新）"""
     agent = NPCAgent(session)
     result = await agent.talk_to_npc(
         request.world_id,
@@ -338,6 +349,43 @@ async def talk_to_npc(
         raise HTTPException(status_code=400, detail=result["error"])
     
     return result
+
+
+@router.post("/character/{template_id}/portrait/generate")
+async def generate_portrait_by_prompt(
+    template_id: str,
+    prompt: str,
+    session: AsyncSession = Depends(get_session)
+):
+    """根据 prompt 为角色生成动态立绘
+    
+    Args:
+        template_id: 角色模板 ID
+        prompt: 描述当前情况的 prompt（如："玩家很开心"、"NPC 很愤怒"）
+    
+    Returns:
+        立绘 URL
+    """
+    try:
+        portrait_url = await update_character_portrait_by_prompt(
+            session,
+            template_id,
+            prompt
+        )
+        
+        if portrait_url:
+            return {
+                "success": True,
+                "portrait_url": portrait_url,
+                "message": "立绘生成成功"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "立绘生成失败"
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"生成立绘失败: {str(e)}")
 
 
 @router.get("/npc/{npc_id}")

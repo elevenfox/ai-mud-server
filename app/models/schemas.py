@@ -115,8 +115,10 @@ class CharacterTemplate(SQLModel, table=True):
     name: str
     description: str = ""
     personality: str = ""
-    # 立绘图片路径
+    # 立绘图片路径（基础立绘）
     portrait_path: Optional[str] = None
+    # 不同 tag 的立绘变体（如：{"happy": "/static/.../portrait_happy.png", "angry": "..."}）
+    portrait_variants: Dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
     # Chub.ai 角色卡字段
     first_message: Optional[str] = None
     scenario: Optional[str] = None

@@ -7,6 +7,7 @@ import time
 
 from app.models.schemas import NPC, Player, World, Location, Conversation, GameEvent, CharacterTemplate
 from app.core.ai import generate_npc_response
+from app.core.portrait_manager import update_character_portrait_by_prompt, get_npc_portrait_url
 
 
 class NPCAgent:
@@ -155,6 +156,30 @@ Current atmosphere: {world.current_mood}"""
         npc.relationship = max(-100, min(100, npc.relationship + relationship_change))
         self.session.add(npc)
         
+        # ====== 动态立绘更新 ======
+        # 根据 NPC 响应和情绪，生成或获取对应的立绘
+        dynamic_portrait_url = None
+        if npc.template_id:
+            try:
+                # 构建 prompt：描述当前情况
+                emotion_prompt = f"{npc_data['name']} 当前情绪是 {new_emotion}，{response.get('response', '')[:100]}"
+                
+                # 获取或生成动态立绘
+                dynamic_portrait_url = await update_character_portrait_by_prompt(
+                    self.session,
+                    npc.template_id,
+                    emotion_prompt,
+                    npc_data.get("description", ""),
+                    npc_data.get("personality", "")
+                )
+            except Exception as e:
+                print(f"⚠️  更新 NPC 立绘失败: {e}")
+        
+        # 如果生成了新立绘，更新 NPC 的 portrait_url（临时，用于本次响应）
+        if dynamic_portrait_url:
+            npc_data["portrait_url"] = dynamic_portrait_url
+        # ====== 动态立绘更新结束 ======
+        
         # 记录游戏事件
         event = GameEvent(
             world_id=world_id,
@@ -166,7 +191,8 @@ Current atmosphere: {world.current_mood}"""
                 "npc_name": npc_data["name"],
                 "player_message": player_message,
                 "emotion": new_emotion,
-                "mood": world.current_mood
+                "mood": world.current_mood,
+                "portrait_url": dynamic_portrait_url or npc_data["portrait_url"]
             }
         )
         self.session.add(event)
@@ -178,7 +204,7 @@ Current atmosphere: {world.current_mood}"""
             "response": response.get("response", "..."),
             "emotion": new_emotion,
             "relationship": npc.relationship,
-            "portrait_url": npc_data["portrait_url"],
+            "portrait_url": dynamic_portrait_url or npc_data["portrait_url"],
             "mood": world.current_mood
         }
     
