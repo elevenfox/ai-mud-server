@@ -17,15 +17,24 @@ LOCAL_LLM = os.getenv("LOCAL_LLM", "").strip()
 if not MOCK_MODE:
     if LOCAL_LLM:
         # 使用本地 LLM API（假设格式兼容 OpenAI）
+        # 确保 URL 格式正确（添加 /v1 如果不存在）
+        base_url = LOCAL_LLM.rstrip('/')
+        if not base_url.endswith('/v1'):
+            base_url = f"{base_url}/v1"
+        
+        print(f"🔧 图片生成使用本地 LLM API: {base_url}")
         client = AsyncOpenAI(
             api_key=os.getenv("OPENAI_API_KEY", "not-needed"),  # 本地 LLM 可能不需要 key
-            base_url=LOCAL_LLM
+            base_url=base_url,
+            timeout=120.0  # 图片生成可能需要更长时间
         )
     else:
         # 使用 OpenAI API
+        print("🔧 图片生成使用 OpenAI API")
         client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 else:
     client = None
+    print("🔧 图片生成使用 MOCK 模式")
 
 
 async def generate_image(

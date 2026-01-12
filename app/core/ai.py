@@ -12,15 +12,24 @@ LOCAL_LLM = os.getenv("LOCAL_LLM", "").strip()
 if not MOCK_MODE:
     if LOCAL_LLM:
         # 使用本地 LLM API（假设格式兼容 OpenAI）
+        # 确保 URL 格式正确（添加 /v1 如果不存在）
+        base_url = LOCAL_LLM.rstrip('/')
+        if not base_url.endswith('/v1'):
+            base_url = f"{base_url}/v1"
+        
+        print(f"🔧 使用本地 LLM API: {base_url}")
         client = AsyncOpenAI(
             api_key=os.getenv("OPENAI_API_KEY", "not-needed"),  # 本地 LLM 可能不需要 key
-            base_url=LOCAL_LLM
+            base_url=base_url,
+            timeout=60.0  # 增加超时时间，本地 LLM 可能较慢
         )
     else:
         # 使用 OpenAI API
+        print("🔧 使用 OpenAI API")
         client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 else:
     client = None
+    print("🔧 使用 MOCK 模式")
 
 
 async def generate_narrative(system_prompt: str, user_prompt: str) -> str:
@@ -58,16 +67,28 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
     
     full_system = f"{system_prompt}\n\n你必须只返回有效的 JSON。{schema_hint}"
     
-    response = await client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
-        messages=[
-            {"role": "system", "content": full_system},
-            {"role": "user", "content": user_prompt}
-        ],
-        temperature=0.7,
-        response_format={"type": "json_object"}
-    )
-    return json.loads(response.choices[0].message.content)
+    try:
+        response = await client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": full_system},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.7,
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        error_msg = str(e)
+        if LOCAL_LLM:
+            print(f"❌ 本地 LLM 连接错误: {error_msg}")
+            print(f"   请检查:")
+            print(f"   1. LOCAL_LLM={LOCAL_LLM} 是否正确")
+            print(f"   2. 本地 LLM 服务是否正在运行")
+            print(f"   3. URL 是否可以访问（尝试: curl {LOCAL_LLM.rstrip('/')}/v1/models）")
+        else:
+            print(f"❌ OpenAI API 连接错误: {error_msg}")
+        raise
 
 
 async def generate_npc_response(
