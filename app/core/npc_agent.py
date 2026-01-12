@@ -200,6 +200,7 @@ Current atmosphere: {world.current_mood}"""
         await self.session.commit()
         
         return {
+            "npc_id": npc_id,
             "npc_name": npc_data["name"],
             "response": response.get("response", "..."),
             "emotion": new_emotion,
