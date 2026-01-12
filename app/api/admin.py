@@ -22,7 +22,7 @@ from app.models.schemas import (
     WorldRulesUpdate, EconomyConfigUpdate
 )
 from app.services.chub_parser import (
-    extract_chara_from_png, embed_chara_to_png,
+    embed_location_to_png, extract_chara_from_png, embed_chara_to_png,
     parse_character_card, create_character_card,
     parse_location_card, create_location_card
 )
