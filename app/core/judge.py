@@ -5,13 +5,37 @@ from sqlmodel import select
 from typing import List, Dict, Any
 import time
 
-from app.models.schemas import World, Location, Player, NPC, GameEvent, JudgeResult, ActionResult
+from app.models.schemas import World, Location, Player, NPC, GameEvent, JudgeResult, ActionResult, CharacterTemplate
 from app.core.ai import judge_action, generate_narrative
 
 
 class ActionJudge:
     def __init__(self, session: AsyncSession):
         self.session = session
+    
+    async def _get_npc_display_name(self, npc: NPC) -> str:
+        """获取 NPC 的显示名称，优先从 CharacterTemplate 获取"""
+        if npc.template_id:
+            template = await self.session.get(CharacterTemplate, npc.template_id)
+            if template:
+                # 如果 NPC 有自定义名称，优先使用；否则使用模板名称
+                return npc.name if npc.name else template.name
+        # 没有模板，使用 NPC 自身名称
+        return npc.name or "未知"
+    
+    async def _get_npc_display_info(self, npc: NPC) -> Dict[str, str]:
+        """获取 NPC 的完整显示信息（名称和描述），优先从 CharacterTemplate 获取"""
+        if npc.template_id:
+            template = await self.session.get(CharacterTemplate, npc.template_id)
+            if template:
+                return {
+                    "name": npc.name if npc.name else template.name,
+                    "description": template.description or ""
+                }
+        return {
+            "name": npc.name or "未知",
+            "description": npc.description or ""
+        }
     
     async def get_physical_constraints(self, location: Location, player: Player, npcs: List[NPC]) -> List[str]:
         """获取当前环境的物理约束"""
@@ -38,7 +62,12 @@ class ActionJudge:
             constraints.append("当前场景没有可前往的其他场景")
         
         if npcs:
-            constraints.append(f"场景中的 NPC: {', '.join([n.name for n in npcs])}")
+            # 获取 NPC 显示名称（从模板获取）
+            npc_names = []
+            for npc in npcs:
+                name = await self._get_npc_display_name(npc)
+                npc_names.append(name)
+            constraints.append(f"场景中的 NPC: {', '.join(npc_names)}")
         else:
             constraints.append("场景中没有 NPC")
         
@@ -52,6 +81,14 @@ class ActionJudge:
         npcs: List[NPC]
     ) -> str:
         """构建当前情境描述"""
+        # 获取 NPC 信息（从模板获取）
+        npc_list = []
+        for npc in npcs:
+            npc_info = await self._get_npc_display_info(npc)
+            npc_list.append(f"- {npc_info['name']}: {npc_info['description']} (Feeling: {npc.current_emotion})")
+        
+        npcs_text = chr(10).join(npc_list) if npc_list else 'None'
+        
         return f"""LOCATION: {location.name}
 {location.description}
 
@@ -61,7 +98,7 @@ PLAYER: {player.name}
 Inventory: {', '.join(player.inventory) or 'Empty'}
 
 NPCS HERE:
-{chr(10).join([f'- {n.name}: {n.description} (Feeling: {n.current_emotion})' for n in npcs]) or 'None'}
+{npcs_text}
 
 WORLD FLAGS: {world.flags}"""
 
@@ -190,7 +227,12 @@ WORLD FLAGS: {world.flags}"""
                 
                 npc_info = ""
                 if npcs:
-                    npc_info = f"\n场景中的 NPC: {', '.join([n.name for n in npcs])}"
+                    # 获取 NPC 显示名称（从模板获取）
+                    npc_names = []
+                    for npc in npcs:
+                        name = await self._get_npc_display_name(npc)
+                        npc_names.append(name)
+                    npc_info = f"\n场景中的 NPC: {', '.join(npc_names)}"
                 
                 user_prompt = f"""玩家从「{from_location.name}」移动到「{to_location.name}」。
 

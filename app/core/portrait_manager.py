@@ -11,6 +11,8 @@ from app.core.image_generator import generate_image, save_image
 from app.services.chub_parser import extract_chara_from_png
 import aiofiles
 import base64
+import aiohttp
+from urllib.parse import quote
 
 
 async def analyze_portrait_tag(
@@ -88,6 +90,31 @@ async def get_or_generate_portrait(
     Returns:
         立绘 URL 路径，如果失败返回 None
     """
+    # ====== 临时功能：从外部 API 获取立绘 ======
+    try:
+        # 获取角色模板以获取角色姓名
+        template = await session.get(CharacterTemplate, character_template_id)
+        if template and template.name:
+            character_name = template.name
+            # 调用外部 API（URL 编码角色姓名以支持中文）
+            encoded_name = quote(character_name)
+            api_url = f"http://dev.tuzac.com/api/?ac=get_random_photo_by_search&keywords={encoded_name}"
+            async with aiohttp.ClientSession() as http_session:
+                async with http_session.get(api_url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get("status") == 1 and data.get("src"):
+                            src = data["src"]
+                            # 确保 URL 完整
+                            if src.startswith("http"):
+                                return src
+                            else:
+                                return f"http://dev.tuzac.com{src}"
+        print(f"⚠️  外部 API 获取立绘失败，继续使用原有逻辑")
+    except Exception as e:
+        print(f"⚠️  外部 API 调用异常: {e}，继续使用原有逻辑")
+    # ====== 临时功能结束 ======
+    
     # 获取角色模板
     template = await session.get(CharacterTemplate, character_template_id)
     if not template:
