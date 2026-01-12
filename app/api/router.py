@@ -208,8 +208,16 @@ async def get_world_state(
             "portrait_url": player.portrait_url,
             "personality": player.personality,
             "background": player.background,
+            # 经济系统
+            "currency": player.currency,
+            "gems": player.gems,
             # 优先使用 AI 决定的位置
             "position": player_position,
+        },
+        "economy": {
+            "currency_name": world.currency_name,
+            "gem_name": world.gem_name,
+            "currency_rules": world.currency_rules,
         },
         "choices": choices_response
     }

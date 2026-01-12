@@ -19,7 +19,7 @@ from app.models.schemas import (
     AdminLoginRequest, AdminLoginResponse,
     CharacterTemplateCreate, CharacterTemplateUpdate,
     LocationTemplateCreate, LocationTemplateUpdate,
-    WorldRulesUpdate
+    WorldRulesUpdate, EconomyConfigUpdate
 )
 from app.services.chub_parser import (
     extract_chara_from_png, embed_chara_to_png,
@@ -603,6 +603,50 @@ async def update_world_rules(
         raise HTTPException(status_code=404, detail="世界不存在")
     
     world.rules = data.rules
+    session.add(world)
+    await session.commit()
+    
+    return {"success": True}
+
+
+@router.get("/world/economy")
+async def get_economy_config(
+    world_id: str = "world_1",
+    session: AsyncSession = Depends(get_session),
+    _: bool = Depends(verify_admin_token)
+):
+    """获取经济系统配置"""
+    world = await session.get(World, world_id)
+    if not world:
+        raise HTTPException(status_code=404, detail="世界不存在")
+    
+    return {
+        "world_id": world.id,
+        "currency_name": world.currency_name,
+        "gem_name": world.gem_name,
+        "currency_rules": world.currency_rules or ""
+    }
+
+
+@router.put("/world/economy")
+async def update_economy_config(
+    data: EconomyConfigUpdate,
+    world_id: str = "world_1",
+    session: AsyncSession = Depends(get_session),
+    _: bool = Depends(verify_admin_token)
+):
+    """更新经济系统配置"""
+    world = await session.get(World, world_id)
+    if not world:
+        raise HTTPException(status_code=404, detail="世界不存在")
+    
+    if data.currency_name is not None:
+        world.currency_name = data.currency_name
+    if data.gem_name is not None:
+        world.gem_name = data.gem_name
+    if data.currency_rules is not None:
+        world.currency_rules = data.currency_rules
+    
     session.add(world)
     await session.commit()
     

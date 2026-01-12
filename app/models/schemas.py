@@ -17,6 +17,10 @@ class World(SQLModel, table=True):
     flags: Dict[str, bool] = Field(default_factory=dict, sa_column=Column(JSON))
     # 当前 BGM mood
     current_mood: str = "neutral"  # neutral, tense, calm, mysterious, action
+    # ========== 经济系统配置 ==========
+    currency_name: str = "金币"  # 游戏内货币名称（如：金币、信用点、铜币）
+    gem_name: str = "宝石"  # 付费货币名称（如：宝石、钻石、水晶）
+    currency_rules: str = ""  # 货币购买范围描述（自然语言，AI 根据此判断消费哪种货币）
 
 class Location(SQLModel, table=True):
     id: str = Field(primary_key=True)
@@ -64,6 +68,9 @@ class Player(SQLModel, table=True):
     personality: Optional[str] = None  # 性格/说话语气
     background: Optional[str] = None  # 背景故事
     attributes: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))  # 属性
+    # ========== 经济系统 ==========
+    currency: int = 0  # 游戏内货币（金钱）
+    gems: int = 0  # 付费货币（宝石）
     # 注意：position 不存数据库，由 AI 根据剧情动态决定，在 API 返回时计算
 
 class GameEvent(SQLModel, table=True):
@@ -260,6 +267,13 @@ class LocationTemplateUpdate(BaseModel):
 class WorldRulesUpdate(BaseModel):
     """更新世界规则请求"""
     rules: List[str]
+
+
+class EconomyConfigUpdate(BaseModel):
+    """更新经济系统配置请求"""
+    currency_name: Optional[str] = None
+    gem_name: Optional[str] = None
+    currency_rules: Optional[str] = None
 
 
 class AvatarSelection(BaseModel):

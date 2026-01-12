@@ -25,7 +25,11 @@ async def seed():
                 "信息是最有价值的货币"
             ],
             flags={"intro_complete": False, "met_kael": False},
-            current_mood="mysterious"
+            current_mood="mysterious",
+            # 经济系统配置
+            currency_name="信用点",
+            gem_name="宝石",
+            currency_rules="信用点用于购买游戏内的物品、服务、食物、装备、情报等。宝石用于购买不影响游戏平衡的装饰性道具，如角色皮肤、配饰、特效等。"
         )
         session.add(world)
         
@@ -124,7 +128,9 @@ async def seed():
             world_id="world_1",
             name="新手",
             location_id="loc_1",
-            inventory=["旧数据板", "50信用点"]
+            inventory=["旧数据板"],
+            currency=50,  # 初始金钱：50 信用点（约等于 50 顿饭）
+            gems=0  # 初始宝石：0（需要付费购买）
         )
         session.add(player)
         

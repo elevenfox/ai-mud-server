@@ -81,14 +81,16 @@ Player inventory: {', '.join(player.inventory) or 'Empty'}
 World flags: {world.flags}
 """
         
-        # 玩家状态
+        # 玩家状态（包含经济系统）
         player_stats = {
             "name": player.name,
             "location": location.name,
             "inventory": player.inventory,
             "relationships": {
                 n.name: n.relationship for n in npcs
-            }
+            },
+            "currency": player.currency,
+            "gems": player.gems,
         }
         
         # 构建 NPC 信息列表（传给 AI 决定位置）
@@ -97,10 +99,19 @@ World flags: {world.flags}
             for npc in npcs
         ]
         
+        # 构建经济系统信息
+        economy_info = f"""
+经济系统:
+- {world.currency_name}: {player.currency}（游戏内货币）
+- {world.gem_name}: {player.gems}（付费货币）
+{f'- 货币规则: {world.currency_rules}' if world.currency_rules else ''}
+基本价值单位: 1 {world.currency_name} = 一顿普通饭的价值
+"""
+        
         # AI 生成选项（包括角色位置）
         result = await generate_choices(
             world_rules=world.rules or [],
-            current_situation=current_situation,
+            current_situation=current_situation + economy_info,
             recent_events=recent_events,
             player_stats=player_stats,
             available_actions=available_actions,
