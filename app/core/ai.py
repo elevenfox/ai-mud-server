@@ -210,110 +210,110 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             content_fixed = re.sub(r'(")\s*~\s*$', r'\1', content_fixed, flags=re.MULTILINE)  # "value" ~ 在行尾
             
             # 1. 再次尝试替换中文标点（可能在第一次清理时遗漏）
-                content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
-                content_fixed = re.sub(r'(")\s*，\s*', r'\1, ', content_fixed)  # 字符串后的中文逗号
-                content_fixed = re.sub(r'(\})\s*，\s*', r'\1, ', content_fixed)  # 对象后的中文逗号
-                content_fixed = re.sub(r'(\])\s*，\s*', r'\1, ', content_fixed)  # 数组后的中文逗号
-                content_fixed = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content_fixed)  # 值后的中文逗号
-                
-                # 1. 如果 JSON 被截断，尝试修复未闭合的字符串和数组
-                # 首先检查是否有未闭合的字符串值
-                # 查找模式: "key": "value (可能未闭合，可能在数组中)
-                # 匹配最后一个未闭合的字符串（在引号内但没有闭合引号）
-                lines = content_fixed.split('\n')
-                for i in range(len(lines) - 1, -1, -1):
-                    line = lines[i]
-                    # 检查是否有未闭合的引号（引号数量为奇数）
-                    quote_count = line.count('"')
-                    if quote_count % 2 == 1:
-                        # 找到未闭合的字符串，尝试修复
-                        # 找到最后一个引号的位置
-                        last_quote_pos = line.rfind('"')
-                        if last_quote_pos >= 0:
-                            # 检查是否在字符串值中（前面有 : 或 ,）
-                            before_quote = line[:last_quote_pos]
-                            if ':' in before_quote or ',' in before_quote:
-                                # 闭合字符串
-                                lines[i] = line[:last_quote_pos+1] + '"'
-                                content_fixed = '\n'.join(lines)
-                                break
-                
-                # 2. 检查是否有未闭合的数组
-                open_brackets = content_fixed.count('[')
-                close_brackets = content_fixed.count(']')
-                if open_brackets > close_brackets:
-                    # 找到最后一个未闭合的数组，闭合它
-                    # 移除最后一个不完整的数组元素
-                    last_open_bracket = content_fixed.rfind('[')
-                    if last_open_bracket >= 0:
-                        # 查找最后一个逗号（在数组内）
-                        after_bracket = content_fixed[last_open_bracket:]
-                        last_comma_in_array = after_bracket.rfind(',')
-                        if last_comma_in_array > 0:
-                            # 检查逗号后是否有完整的对象
-                            after_comma = after_bracket[last_comma_in_array+1:].strip()
-                            # 如果逗号后没有完整的对象（没有闭合的 }），移除这个不完整的元素
-                            if not after_comma or (after_comma.startswith('{') and '}' not in after_comma):
-                                content_fixed = content_fixed[:last_open_bracket + last_comma_in_array].rstrip() + '\n]'
-                            else:
-                                # 如果有部分对象，尝试闭合它
-                                content_fixed = content_fixed + '\n]'
+            content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
+            content_fixed = re.sub(r'(")\s*，\s*', r'\1, ', content_fixed)  # 字符串后的中文逗号
+            content_fixed = re.sub(r'(\})\s*，\s*', r'\1, ', content_fixed)  # 对象后的中文逗号
+            content_fixed = re.sub(r'(\])\s*，\s*', r'\1, ', content_fixed)  # 数组后的中文逗号
+            content_fixed = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content_fixed)  # 值后的中文逗号
+            
+            # 2. 如果 JSON 被截断，尝试修复未闭合的字符串和数组
+            # 首先检查是否有未闭合的字符串值
+            # 查找模式: "key": "value (可能未闭合，可能在数组中)
+            # 匹配最后一个未闭合的字符串（在引号内但没有闭合引号）
+            lines = content_fixed.split('\n')
+            for i in range(len(lines) - 1, -1, -1):
+                line = lines[i]
+                # 检查是否有未闭合的引号（引号数量为奇数）
+                quote_count = line.count('"')
+                if quote_count % 2 == 1:
+                    # 找到未闭合的字符串，尝试修复
+                    # 找到最后一个引号的位置
+                    last_quote_pos = line.rfind('"')
+                    if last_quote_pos >= 0:
+                        # 检查是否在字符串值中（前面有 : 或 ,）
+                        before_quote = line[:last_quote_pos]
+                        if ':' in before_quote or ',' in before_quote:
+                            # 闭合字符串
+                            lines[i] = line[:last_quote_pos+1] + '"'
+                            content_fixed = '\n'.join(lines)
+                            break
+            
+            # 3. 检查是否有未闭合的数组
+            open_brackets = content_fixed.count('[')
+            close_brackets = content_fixed.count(']')
+            if open_brackets > close_brackets:
+                # 找到最后一个未闭合的数组，闭合它
+                # 移除最后一个不完整的数组元素
+                last_open_bracket = content_fixed.rfind('[')
+                if last_open_bracket >= 0:
+                    # 查找最后一个逗号（在数组内）
+                    after_bracket = content_fixed[last_open_bracket:]
+                    last_comma_in_array = after_bracket.rfind(',')
+                    if last_comma_in_array > 0:
+                        # 检查逗号后是否有完整的对象
+                        after_comma = after_bracket[last_comma_in_array+1:].strip()
+                        # 如果逗号后没有完整的对象（没有闭合的 }），移除这个不完整的元素
+                        if not after_comma or (after_comma.startswith('{') and '}' not in after_comma):
+                            content_fixed = content_fixed[:last_open_bracket + last_comma_in_array].rstrip() + '\n]'
                         else:
-                            # 如果没有逗号，检查是否有未闭合的对象
-                            after_bracket_content = after_bracket[1:].strip()
-                            if after_bracket_content.startswith('{') and '}' not in after_bracket_content:
-                                # 移除未闭合的对象，闭合数组
-                                content_fixed = content_fixed[:last_open_bracket] + '[]'
-                            else:
-                                # 直接闭合数组
-                                content_fixed = content_fixed + '\n]'
-                
-                # 3. 如果没有找到未闭合的字符串，检查是否有未闭合的键值对
-                if '"' in content_fixed:
-                    last_comma = content_fixed.rfind(',')
-                    if last_comma > 0:
-                        # 检查逗号后是否有完整的键值对
-                        after_comma = content_fixed[last_comma+1:].strip()
-                        if not after_comma or not (after_comma.startswith('"') and '"' in after_comma[1:]):
-                            # 移除最后一个不完整的键值对
-                            content_fixed = content_fixed[:last_comma].rstrip() + '\n}'
-                
-                # 2. 如果仍然不完整，尝试添加闭合括号
-                open_braces = content_fixed.count('{')
-                close_braces = content_fixed.count('}')
-                if open_braces > close_braces:
-                    content_fixed += '\n' + '}' * (open_braces - close_braces)
-                
-                # 3. 尝试移除所有非打印字符（除了必要的）
-                content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\u4e00-\u9fff]', '', content_fixed)
-                
-                # 4. 再次尝试提取 JSON
-                json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
-                if json_match:
-                    try:
-                        return json.loads(json_match.group(0))
-                    except json.JSONDecodeError:
-                        pass
-                
-                # 5. 最后尝试：如果 JSON 字符串中有未转义的换行，尝试修复
-                # 在字符串值中的换行符应该被转义为 \n
+                            # 如果有部分对象，尝试闭合它
+                            content_fixed = content_fixed + '\n]'
+                    else:
+                        # 如果没有逗号，检查是否有未闭合的对象
+                        after_bracket_content = after_bracket[1:].strip()
+                        if after_bracket_content.startswith('{') and '}' not in after_bracket_content:
+                            # 移除未闭合的对象，闭合数组
+                            content_fixed = content_fixed[:last_open_bracket] + '[]'
+                        else:
+                            # 直接闭合数组
+                            content_fixed = content_fixed + '\n]'
+            
+            # 4. 如果没有找到未闭合的字符串，检查是否有未闭合的键值对
+            if '"' in content_fixed:
+                last_comma = content_fixed.rfind(',')
+                if last_comma > 0:
+                    # 检查逗号后是否有完整的键值对
+                    after_comma = content_fixed[last_comma+1:].strip()
+                    if not after_comma or not (after_comma.startswith('"') and '"' in after_comma[1:]):
+                        # 移除最后一个不完整的键值对
+                        content_fixed = content_fixed[:last_comma].rstrip() + '\n}'
+            
+            # 5. 如果仍然不完整，尝试添加闭合括号
+            open_braces = content_fixed.count('{')
+            close_braces = content_fixed.count('}')
+            if open_braces > close_braces:
+                content_fixed += '\n' + '}' * (open_braces - close_braces)
+            
+            # 6. 尝试移除所有非打印字符（除了必要的）
+            content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\u4e00-\u9fff]', '', content_fixed)
+            
+            # 7. 再次尝试提取 JSON
+            json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
+            if json_match:
                 try:
-                    # 尝试找到并修复字符串中的换行符
-                    def fix_string_newlines(match):
-                        # 匹配 JSON 字符串值
-                        full_match = match.group(0)
-                        # 如果字符串中有未转义的换行，转义它们
-                        if '\n' in full_match and '\\n' not in full_match:
-                            return full_match.replace('\n', '\\n')
-                        return full_match
-                    
-                    # 匹配 JSON 字符串值（"key": "value"）
-                    content_fixed = re.sub(r'":\s*"[^"]*"', fix_string_newlines, content_fixed)
-                    return json.loads(content_fixed)
-                except:
+                    return json.loads(json_match.group(0))
+                except json.JSONDecodeError:
                     pass
+            
+            # 8. 最后尝试：如果 JSON 字符串中有未转义的换行，尝试修复
+            # 在字符串值中的换行符应该被转义为 \n
+            try:
+                # 尝试找到并修复字符串中的换行符
+                def fix_string_newlines(match):
+                    # 匹配 JSON 字符串值
+                    full_match = match.group(0)
+                    # 如果字符串中有未转义的换行，转义它们
+                    if '\n' in full_match and '\\n' not in full_match:
+                        return full_match.replace('\n', '\\n')
+                    return full_match
                 
-                print(f"❌ 无法修复 JSON，原始错误: {json_err}")
+                # 匹配 JSON 字符串值（"key": "value"）
+                content_fixed = re.sub(r'":\s*"[^"]*"', fix_string_newlines, content_fixed)
+                return json.loads(content_fixed)
+            except:
+                pass
+            
+            print(f"❌ 无法修复 JSON，原始错误: {json_err}")
             raise
     except Exception as e:
         error_msg = str(e)
