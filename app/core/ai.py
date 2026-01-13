@@ -169,7 +169,7 @@ def parse_content(content: str) -> Dict[str, Any]:
     try:
         return json5.loads(content)
     except json.JSONDecodeError:
-        pass
+        raise ValueError("无法解析内容为 JSON")
     
     # If not json, return the content as is
     return content
@@ -246,7 +246,7 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
         try:
             parsed_content = parse_content(content)
             return parsed_content
-        except json.JSONDecodeError as json_err:
+        except Exception as json_err:
             # JSON 解析失败，尝试修复
             if LOCAL_LLM:
                 print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
@@ -255,191 +255,6 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
                 print(f"   完整内容:\n{content}")
                 print(f"   {'='*80}")
                 
-            # 尝试修复常见的 JSON 问题
-            content_fixed = content
-            
-            # 0. 先转义字符串值中的引号（必须在清理多余内容之前）
-            def escape_quotes_in_json_fixed(text):
-                result = []
-                i = 0
-                in_string = False
-                escape_next = False
-                
-                while i < len(text):
-                    char = text[i]
-                    
-                    if escape_next:
-                        result.append(char)
-                        escape_next = False
-                        i += 1
-                        continue
-                    
-                    if char == '\\':
-                        result.append(char)
-                        escape_next = True
-                        i += 1
-                        continue
-                    
-                    if char == '"':
-                        if not in_string:
-                            in_string = True
-                            result.append(char)
-                        else:
-                            j = i + 1
-                            while j < len(text) and text[j] in ' \t\n\r':
-                                j += 1
-                            
-                            if j >= len(text):
-                                in_string = False
-                                result.append(char)
-                            else:
-                                next_char = text[j]
-                                if next_char in ':},]' or next_char == '\n':
-                                    in_string = False
-                                    result.append(char)
-                                else:
-                                    result.append('\\"')
-                        i += 1
-                        continue
-                    
-                    result.append(char)
-                    i += 1
-                
-                return ''.join(result)
-            
-            content_fixed = escape_quotes_in_json_fixed(content_fixed)
-            
-            # 0.5. 修复字符串值后多余的符号（如 ~ 在引号外，或非 JSON 内容）
-            content_fixed = re.sub(r'(")\s*~\s*([,}])', r'\1\2', content_fixed)  # "value" ~, 或 "value" ~}
-            content_fixed = re.sub(r'(")\s*~\s*$', r'\1', content_fixed, flags=re.MULTILINE)  # "value" ~ 在行尾
-            # 移除字符串值后的非 JSON 内容（如 *text*）
-            content_fixed = re.sub(r'(")\s+(\*[^*]+\*|\S+)', r'\1', content_fixed)  # 移除字符串值后的非 JSON 内容
-            
-            # 0.6. 清理字符串值中的 JavaScript 代码片段
-            # 移除 JavaScript 字符串连接操作符和代码片段
-            # 模式1: "text" + (condition ? "..." : "...") - 移除整个三元表达式，闭合引号
-            content_fixed = re.sub(r'(")\s*\+\s*\([^)]*\)\s*\?[^"]*"[^"]*"[^)]*\)', r'\1"', content_fixed)
-            # 模式2: "text" + function_call() - 移除函数调用，闭合引号
-            content_fixed = re.sub(r'(")\s*\+\s*\([^)]+\)', r'\1"', content_fixed)
-            # 模式3: "text" + "more text" - 移除字符串连接，闭合引号
-            content_fixed = re.sub(r'(")\s*\+\s*"[^"]*"', r'\1"', content_fixed)
-            
-            # 0.7. 修复嵌套对象结构错误（如 { { "key": "value" } }）
-            # 移除多余的开括号
-            content_fixed = re.sub(r'\{\s*\{', r'{', content_fixed)  # { { -> {
-            content_fixed = re.sub(r'\}\s*\}', r'}', content_fixed)  # } } -> }
-            
-            # 0.8. 修复数组末尾的多余逗号（如 [1, 2, 3, ]）
-            content_fixed = re.sub(r',\s*\]', r']', content_fixed)  # , ] -> ]
-            content_fixed = re.sub(r',\s*\}', r'}', content_fixed)  # , } -> }
-            
-            # 1. 再次尝试替换中文标点（可能在第一次清理时遗漏）
-            content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
-            content_fixed = re.sub(r'(")\s*，\s*', r'\1, ', content_fixed)  # 字符串后的中文逗号
-            content_fixed = re.sub(r'(\})\s*，\s*', r'\1, ', content_fixed)  # 对象后的中文逗号
-            content_fixed = re.sub(r'(\])\s*，\s*', r'\1, ', content_fixed)  # 数组后的中文逗号
-            content_fixed = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content_fixed)  # 值后的中文逗号
-            
-            # 2. 如果 JSON 被截断，尝试修复未闭合的字符串和数组
-            # 首先检查是否有未闭合的字符串值
-            # 查找模式: "key": "value (可能未闭合，可能在数组中)
-            # 匹配最后一个未闭合的字符串（在引号内但没有闭合引号）
-            lines = content_fixed.split('\n')
-            for i in range(len(lines) - 1, -1, -1):
-                line = lines[i]
-                # 检查是否有未闭合的引号（引号数量为奇数）
-                quote_count = line.count('"')
-                if quote_count % 2 == 1:
-                    # 找到未闭合的字符串，尝试修复
-                    # 找到最后一个引号的位置
-                    last_quote_pos = line.rfind('"')
-                    if last_quote_pos >= 0:
-                        # 检查是否在字符串值中（前面有 : 或 ,）
-                        before_quote = line[:last_quote_pos]
-                        if ':' in before_quote or ',' in before_quote:
-                            # 闭合字符串
-                            lines[i] = line[:last_quote_pos+1] + '"'
-                            content_fixed = '\n'.join(lines)
-                            break
-            
-            # 3. 检查是否有未闭合的数组
-            open_brackets = content_fixed.count('[')
-            close_brackets = content_fixed.count(']')
-            if open_brackets > close_brackets:
-                # 找到最后一个未闭合的数组，闭合它
-                # 移除最后一个不完整的数组元素
-                last_open_bracket = content_fixed.rfind('[')
-                if last_open_bracket >= 0:
-                    # 查找最后一个逗号（在数组内）
-                    after_bracket = content_fixed[last_open_bracket:]
-                    last_comma_in_array = after_bracket.rfind(',')
-                    if last_comma_in_array > 0:
-                        # 检查逗号后是否有完整的对象
-                        after_comma = after_bracket[last_comma_in_array+1:].strip()
-                        # 如果逗号后没有完整的对象（没有闭合的 }），移除这个不完整的元素
-                        if not after_comma or (after_comma.startswith('{') and '}' not in after_comma):
-                            content_fixed = content_fixed[:last_open_bracket + last_comma_in_array].rstrip() + '\n]'
-                        else:
-                            # 如果有部分对象，尝试闭合它
-                            content_fixed = content_fixed + '\n]'
-                    else:
-                        # 如果没有逗号，检查是否有未闭合的对象
-                        after_bracket_content = after_bracket[1:].strip()
-                        if after_bracket_content.startswith('{') and '}' not in after_bracket_content:
-                            # 移除未闭合的对象，闭合数组
-                            content_fixed = content_fixed[:last_open_bracket] + '[]'
-                        else:
-                            # 直接闭合数组
-                            content_fixed = content_fixed + '\n]'
-            
-            # 4. 如果没有找到未闭合的字符串，检查是否有未闭合的键值对
-            if '"' in content_fixed:
-                last_comma = content_fixed.rfind(',')
-                if last_comma > 0:
-                    # 检查逗号后是否有完整的键值对
-                    after_comma = content_fixed[last_comma+1:].strip()
-                    if not after_comma or not (after_comma.startswith('"') and '"' in after_comma[1:]):
-                        # 移除最后一个不完整的键值对
-                        content_fixed = content_fixed[:last_comma].rstrip() + '\n}'
-            
-            # 5. 如果仍然不完整，尝试添加闭合括号
-            open_braces = content_fixed.count('{')
-            close_braces = content_fixed.count('}')
-            if open_braces > close_braces:
-                content_fixed += '\n' + '}' * (open_braces - close_braces)
-            
-            # 6. 清理非打印字符（保留中文、换行符、制表符、回车符）
-            # 移除所有控制字符（0x00-0x1F 和 0x7F-0x9F），但保留 \n, \t, \r
-            content_cleaned = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f]', '', content_fixed)
-            
-            # 7. 再次尝试提取 JSON
-            json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
-            if json_match:
-                try:
-                    return parse_json_with_fallback(json_match.group(0))
-                except json.JSONDecodeError:
-                    pass
-            
-            # 8. 最后尝试：如果 JSON 字符串中有未转义的换行，尝试修复
-            # 在字符串值中的换行符应该被转义为 \n
-            try:
-                # 尝试找到并修复字符串中的换行符
-                def fix_string_newlines(match):
-                    # 匹配 JSON 字符串值
-                    full_match = match.group(0)
-                    # 如果字符串中有未转义的换行，转义它们
-                    if '\n' in full_match and '\\n' not in full_match:
-                        return full_match.replace('\n', '\\n')
-                    return full_match
-                
-                # 匹配 JSON 字符串值（"key": "value"）
-                content_fixed = re.sub(r'":\s*"[^"]*"', fix_string_newlines, content_fixed)
-                return parse_json_with_fallback(content_fixed)
-            except:
-                pass
-            
-            print(f"❌ 无法修复 JSON，原始错误: {json_err}")
-            raise
     except Exception as e:
         error_msg = str(e)
         if LOCAL_LLM:
@@ -798,7 +613,50 @@ async def generate_choices(
         npc_names = [npc.get("name", "未知") for npc in npcs_in_scene]
         npc_info = f"\n当前场景中的 NPC: {', '.join(npc_names)}"
     
-    system_prompt = """你是一个 MUD 游戏的游戏大师。为玩家生成有意义的选项，并像视觉小说导演一样安排角色在画面中的位置。请用中文回复。
+    # 针对本地 LLM（如 Qwen2.5-7B）使用更简单、更明确的 prompt
+    if LOCAL_LLM:
+        system_prompt = """你是一个游戏系统，必须返回有效的 JSON 格式。
+
+任务：生成 3-4 个游戏选项，并安排角色位置。
+
+JSON 格式（必须严格遵守）：
+{
+  "narrative": "简短描述当前情境",
+  "choices": [
+    {"id": "1", "text": "选项1的文字", "hint": "提示或null"},
+    {"id": "2", "text": "选项2的文字", "hint": null},
+    {"id": "3", "text": "选项3的文字", "hint": null}
+  ],
+  "mood": "neutral",
+  "character_positions": {
+    "player": "left"
+  }
+}
+
+重要规则：
+1. 只返回 JSON，不要其他文字
+2. text 字段必须是纯中文文本，不要代码
+3. id 必须是字符串 "1", "2", "3" 等
+4. mood 必须是: neutral, tense, calm, mysterious, action 之一
+5. character_positions 中 player 必须是: left, center, right 之一
+6. 如果有 NPC，添加 "npc_id": "left|center|right"
+7. hint 可以是字符串或 null
+
+示例（严格按照这个格式）：
+{
+  "narrative": "你站在霓虹灯下，思考下一步行动",
+  "choices": [
+    {"id": "1", "text": "继续前进", "hint": null},
+    {"id": "2", "text": "观察周围", "hint": "可能发现线索"},
+    {"id": "3", "text": "返回", "hint": null}
+  ],
+  "mood": "neutral",
+  "character_positions": {
+    "player": "center"
+  }
+}"""
+    else:
+        system_prompt = """你是一个 MUD 游戏的游戏大师。为玩家生成有意义的选项，并像视觉小说导演一样安排角色在画面中的位置。请用中文回复。
 
 规则:
 - 生成 3-4 个不同的、有意义的选项
