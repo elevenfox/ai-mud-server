@@ -267,9 +267,62 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             # 尝试修复常见的 JSON 问题
             content_fixed = content
             
-            # 0. 修复字符串值后多余的符号（如 ~ 在引号外）
+            # 0. 先转义字符串值中的引号（必须在清理多余内容之前）
+            def escape_quotes_in_json_fixed(text):
+                result = []
+                i = 0
+                in_string = False
+                escape_next = False
+                
+                while i < len(text):
+                    char = text[i]
+                    
+                    if escape_next:
+                        result.append(char)
+                        escape_next = False
+                        i += 1
+                        continue
+                    
+                    if char == '\\':
+                        result.append(char)
+                        escape_next = True
+                        i += 1
+                        continue
+                    
+                    if char == '"':
+                        if not in_string:
+                            in_string = True
+                            result.append(char)
+                        else:
+                            j = i + 1
+                            while j < len(text) and text[j] in ' \t\n\r':
+                                j += 1
+                            
+                            if j >= len(text):
+                                in_string = False
+                                result.append(char)
+                            else:
+                                next_char = text[j]
+                                if next_char in ':},]' or next_char == '\n':
+                                    in_string = False
+                                    result.append(char)
+                                else:
+                                    result.append('\\"')
+                        i += 1
+                        continue
+                    
+                    result.append(char)
+                    i += 1
+                
+                return ''.join(result)
+            
+            content_fixed = escape_quotes_in_json_fixed(content_fixed)
+            
+            # 0.5. 修复字符串值后多余的符号（如 ~ 在引号外，或非 JSON 内容）
             content_fixed = re.sub(r'(")\s*~\s*([,}])', r'\1\2', content_fixed)  # "value" ~, 或 "value" ~}
             content_fixed = re.sub(r'(")\s*~\s*$', r'\1', content_fixed, flags=re.MULTILINE)  # "value" ~ 在行尾
+            # 移除字符串值后的非 JSON 内容（如 *text*）
+            content_fixed = re.sub(r'(")\s+(\*[^*]+\*|\S+)', r'\1', content_fixed)  # 移除字符串值后的非 JSON 内容
             
             # 1. 再次尝试替换中文标点（可能在第一次清理时遗漏）
             content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
