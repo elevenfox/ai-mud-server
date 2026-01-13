@@ -27,7 +27,7 @@ if not MOCK_MODE:
         client = AsyncOpenAI(
             api_key=os.getenv("OPENAI_API_KEY", "not-needed"),  # 本地 LLM 可能不需要 key
             base_url=base_url,
-            timeout=60.0  # 增加超时时间，本地 LLM 可能较慢
+            timeout=120.0  # 增加超时时间，本地 LLM 可能较慢，生成复杂 JSON 需要更多时间
         )
     else:
         # 使用 OpenAI API
@@ -167,7 +167,29 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             request_params["max_tokens"] = MAX_OUTPUT_TOKENS
         
         response = await client.chat.completions.create(**request_params)
-        content = response.choices[0].message.content
+        
+        # 检查响应完整性
+        if not response.choices or len(response.choices) == 0:
+            raise ValueError("LLM 响应为空：没有返回任何选择")
+        
+        choice = response.choices[0]
+        
+        # 检查 finish_reason（如果存在）
+        if hasattr(choice, 'finish_reason') and choice.finish_reason:
+            if choice.finish_reason == "length":
+                print(f"⚠️  警告：LLM 响应因达到 max_tokens 限制而被截断 (finish_reason: {choice.finish_reason})")
+                print(f"   当前 max_tokens: {request_params.get('max_tokens', 'N/A')}")
+            elif choice.finish_reason != "stop":
+                print(f"⚠️  警告：LLM 响应异常结束 (finish_reason: {choice.finish_reason})")
+        
+        content = choice.message.content
+        
+        if content is None:
+            raise ValueError("LLM 响应内容为空")
+        
+        # 记录响应长度（用于调试）
+        if LOCAL_LLM:
+            print(f"📝 LLM 响应长度: {len(content)} 字符")
         
         # 清理和修复 JSON（本地 LLM 可能返回格式不正确的 JSON）
         if LOCAL_LLM:
