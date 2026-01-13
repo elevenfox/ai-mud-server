@@ -1,11 +1,35 @@
 import os
 import json
 import re
+import json5
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from typing import Optional, List, Dict, Any
 
 load_dotenv()
+
+
+def parse_json_with_fallback(content: str) -> Dict[str, Any]:
+    """使用 json5 优先解析 JSON，如果失败则使用标准 json
+    
+    json5 支持更宽松的 JSON 格式：
+    - 允许尾随逗号
+    - 允许单引号字符串
+    - 允许未转义的换行符（在字符串中）
+    - 允许注释
+    - 等等
+    """
+    try:
+        # 先尝试使用 json5 解析（更宽松）
+        return json5.loads(content)
+    except (json5.JSON5DecodeError, ValueError, AttributeError) as e:
+        # 如果 json5 失败，尝试标准 json
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # 如果都失败，抛出 json5 的错误（通常更详细）
+            raise e
+
 
 MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() == "true"
 # 支持本地 LLM：如果 LOCAL_LLM 不为空，使用本地 API；否则使用 OpenAI
@@ -97,7 +121,7 @@ async def generate_narrative(system_prompt: str, user_prompt: str) -> str:
         return f"[MOCK] 系统提示: {system_prompt[:50]}... | 用户: {user_prompt[:50]}..."
     
     messages = [
-        {"role": "system", "content": system_prompt},
+            {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
     ]
     
@@ -138,6 +162,17 @@ async def generate_narrative(system_prompt: str, user_prompt: str) -> str:
     
     return content
 
+
+def parse_content(content: str) -> Dict[str, Any]:
+
+    # Use json5 to parse the content
+    try:
+        return json5.loads(content)
+    except json.JSONDecodeError:
+        pass
+    
+    # If not json, return the content as is
+    return content
 
 async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str = "") -> Dict[str, Any]:
     """生成结构化 JSON 输出"""
@@ -201,124 +236,16 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
                 print(f"⚠️  警告：LLM 响应异常结束 (finish_reason: {choice.finish_reason})")
         
         content = choice.message.content
+        print("--------------------------------")
+        print(f"content: {content}")
+        print("--------------------------------")
         
         if content is None:
             raise ValueError("LLM 响应内容为空")
         
-        # 记录响应长度（用于调试）
-        if LOCAL_LLM:
-            print(f"📝 LLM 响应长度: {len(content)} 字符")
-        
-        # 清理和修复 JSON（本地 LLM 可能返回格式不正确的 JSON）
-        if LOCAL_LLM:
-            # 移除控制字符（除了换行符、制表符和回车符）
-            # 注意：JSON 字符串值中的换行符应该被转义为 \n，但结构中的换行符是允许的
-            content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f]', '', content)
-            
-            # 修复字符串值后多余的符号（如 ~ 在引号外）
-            content = re.sub(r'(")\s*~\s*([,}])', r'\1\2', content)  # "value" ~, 或 "value" ~}
-            content = re.sub(r'(")\s*~\s*$', r'\1', content, flags=re.MULTILINE)  # "value" ~ 在行尾
-            
-            # 替换 JSON 结构中的中文标点符号为英文标点
-            # 注意：只替换 JSON 结构中的标点，不替换字符串值内的标点
-            
-            # 1. 替换键后的中文冒号为英文冒号（"key"： -> "key":）
-            content = re.sub(r'(")\s*：\s*', r'\1: ', content)
-            
-            # 2. 替换值后的中文逗号为英文逗号（在字符串值、对象、数组后）
-            # 模式：字符串值 "value"，  -> "value",
-            content = re.sub(r'(")\s*，\s*', r'\1, ', content)
-            # 模式：对象 }，  -> },
-            content = re.sub(r'(\})\s*，\s*', r'\1, ', content)
-            # 模式：数组 ]，  -> ],
-            content = re.sub(r'(\])\s*，\s*', r'\1, ', content)
-            # 模式：数字或布尔值后的中文逗号
-            content = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content)
-            
-            # 3. 清理字符串值中的 JavaScript 代码片段（在初始清理阶段）
-            # 移除 JavaScript 字符串连接操作符和代码片段
-            # 模式1: "text" + (condition ? "..." : "...") - 移除整个三元表达式，闭合引号
-            content = re.sub(r'(")\s*\+\s*\([^)]*\)\s*\?[^"]*"[^"]*"[^)]*\)', r'\1"', content)
-            # 模式2: "text" + function_call() - 移除函数调用，闭合引号
-            content = re.sub(r'(")\s*\+\s*\([^)]+\)', r'\1"', content)
-            # 模式3: "text" + "more text" - 移除字符串连接，闭合引号
-            content = re.sub(r'(")\s*\+\s*"[^"]*"', r'\1"', content)
-            
-            # 4. 修复嵌套对象结构错误（在初始清理阶段）
-            content = re.sub(r'\{\s*\{', r'{', content)  # { { -> {
-            content = re.sub(r'\}\s*\}', r'}', content)  # } } -> }
-            
-            # 5. 修复数组末尾的多余逗号（在初始清理阶段）
-            content = re.sub(r',\s*\]', r']', content)  # , ] -> ]
-            content = re.sub(r',\s*\}', r'}', content)  # , } -> }
-            
-            # 6. 修复字符串值中未转义的双引号（在初始清理阶段也应用）
-            def escape_quotes_in_json_initial(text):
-                result = []
-                i = 0
-                in_string = False
-                escape_next = False
-                
-                while i < len(text):
-                    char = text[i]
-                    
-                    if escape_next:
-                        result.append(char)
-                        escape_next = False
-                        i += 1
-                        continue
-                    
-                    if char == '\\':
-                        result.append(char)
-                        escape_next = True
-                        i += 1
-                        continue
-                    
-                    if char == '"':
-                        if not in_string:
-                            # 字符串开始
-                            in_string = True
-                            result.append(char)
-                        else:
-                            # 检查下一个字符，判断是否是字符串结束
-                            # 跳过空白字符
-                            j = i + 1
-                            while j < len(text) and text[j] in ' \t\n\r':
-                                j += 1
-                            
-                            if j >= len(text):
-                                # 文件结束，这是字符串结束
-                                in_string = False
-                                result.append(char)
-                            else:
-                                next_char = text[j]
-                                # 如果下一个非空白字符是 : , } ] 或换行，说明这是字符串结束
-                                if next_char in ':},]' or next_char == '\n':
-                                    in_string = False
-                                    result.append(char)
-                                else:
-                                    # 这是字符串值中的引号，需要转义
-                                    result.append('\\"')
-                        i += 1
-                        continue
-                    
-                    result.append(char)
-                    i += 1
-                
-                return ''.join(result)
-            
-            content = escape_quotes_in_json_initial(content)
-            
-            # 移除末尾的分隔线（调试输出可能被包含在响应中）
-            content = re.sub(r'\s*=+\s*$', '', content, flags=re.MULTILINE)
-            
-            # 尝试提取 JSON 对象（如果响应包含其他文本）
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                content = json_match.group(0)
-        
         try:
-            return json.loads(content)
+            parsed_content = parse_content(content)
+            return parsed_content
         except json.JSONDecodeError as json_err:
             # JSON 解析失败，尝试修复
             if LOCAL_LLM:
@@ -489,7 +416,7 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
             if json_match:
                 try:
-                    return json.loads(json_match.group(0))
+                    return parse_json_with_fallback(json_match.group(0))
                 except json.JSONDecodeError:
                     pass
             
@@ -507,7 +434,7 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
                 
                 # 匹配 JSON 字符串值（"key": "value"）
                 content_fixed = re.sub(r'":\s*"[^"]*"', fix_string_newlines, content_fixed)
-                return json.loads(content_fixed)
+                return parse_json_with_fallback(content_fixed)
             except:
                 pass
             
@@ -723,7 +650,7 @@ async def generate_npc_response(
                 # 这是一个字符串值，需要包装成 JSON 对象
                 try:
                     # 先尝试解析字符串，如果成功，说明格式正确
-                    parsed_string = json.loads(content_stripped)
+                    parsed_string = parse_json_with_fallback(content_stripped)
                     # 包装成 JSON 对象
                     content = json.dumps({
                         "response": parsed_string,
@@ -754,8 +681,8 @@ async def generate_npc_response(
                     print(f"⚠️  LLM 返回的是字符串值（包含控制字符），已修复并包装成 JSON 对象")
     
     try:
-        return json.loads(content)
-    except json.JSONDecodeError as json_err:
+        return parse_json_with_fallback(content)
+    except (json.JSONDecodeError, json5.JSON5DecodeError, ValueError) as json_err:
         # JSON 解析失败，尝试修复（使用与 generate_json 相同的修复逻辑）
         if LOCAL_LLM:
             print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
@@ -848,7 +775,7 @@ async def generate_npc_response(
             json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
             if json_match:
                 try:
-                    return json.loads(json_match.group(0))
+                    return parse_json_with_fallback(json_match.group(0))
                 except:
                     pass
             raise
@@ -1172,8 +1099,8 @@ async def judge_action(
             content = json_match.group(0)
     
     try:
-        return json.loads(content)
-    except json.JSONDecodeError as json_err:
+        return parse_json_with_fallback(content)
+    except (json.JSONDecodeError, json5.JSON5DecodeError, ValueError) as json_err:
         # JSON 解析失败，尝试修复（使用与 generate_json 相同的修复逻辑）
         if LOCAL_LLM:
             print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
@@ -1258,7 +1185,7 @@ async def judge_action(
             json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
             if json_match:
                 try:
-                    return json.loads(json_match.group(0))
+                    return parse_json_with_fallback(json_match.group(0))
                 except:
                     pass
             raise
