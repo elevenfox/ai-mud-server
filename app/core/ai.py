@@ -9,6 +9,26 @@ from typing import Optional, List, Dict, Any
 load_dotenv()
 
 
+EMOTION_LIST = [
+    "neutral",
+    "tense",
+    "calm",
+    "mysterious",
+    "action",
+    "happy",
+    "sad",
+    "angry",
+    "surprised",
+    "fearful",
+    "excited",
+    "bored",
+    "curious",
+    "confused",
+    "annoyed",
+    "satisfied",
+    "disappointed"
+]
+
 def parse_json_with_fallback(content: str) -> Dict[str, Any]:
     """使用 json5 优先解析 JSON，如果失败则使用标准 json
     
@@ -22,21 +42,125 @@ def parse_json_with_fallback(content: str) -> Dict[str, Any]:
     try:
         # 先尝试使用 json5 解析（更宽松）
         return json5.loads(content)
-    except (json5.JSON5DecodeError, ValueError, AttributeError) as e:
+    except Exception as e:
         # 如果 json5 失败，尝试标准 json
         try:
             return json.loads(content)
-        except json.JSONDecodeError:
-            # 如果都失败，抛出 json5 的错误（通常更详细）
+        except json.JSONDecodeError as je:
+            # 如果都失败，抛出异常（调用者可以使用 repair_json_with_llm 修复）
             raise e
 
 
+async def repair_json_with_llm(invalid_json: str, expected_schema: Optional[str] = None) -> Dict[str, Any]:
+    """使用 LLM 修复无效的 JSON 字符串
+    
+    Args:
+        invalid_json: 无效的 JSON 字符串
+        expected_schema: 可选的 JSON schema 描述，帮助 LLM 理解期望的格式
+    
+    Returns:
+        修复后的 JSON 对象
+    """
+    if MOCK_MODE or client is None:
+        raise ValueError("LLM 不可用，无法修复 JSON")
+    
+    # 构建修复 prompt
+    schema_hint = ""
+    if expected_schema:
+        schema_hint = f"\n期望的 JSON 结构：\n{expected_schema}"
+    
+    system_prompt = f"""你是一个 JSON 修复专家。你的任务是将无效的 JSON 字符串修复为有效的 JSON。
+
+规则：
+1. 只返回修复后的 JSON，不要其他文字
+2. 保持原始数据的含义和结构
+3. 修复常见的 JSON 错误：
+   - 未转义的引号
+   - 尾随逗号
+   - 中文标点符号（，、：）
+   - 控制字符
+   - 未闭合的括号
+   - 多个 JSON 对象（只保留第一个）
+4. 确保所有字符串值都正确转义
+5. 确保所有数字、布尔值、null 格式正确{schema_hint}
+
+只返回修复后的 JSON，不要任何解释或额外文本。"""
+
+    user_prompt = f"""请修复以下无效的 JSON：
+
+{invalid_json[:2000]}  # 限制长度避免超出 token 限制
+
+只返回修复后的 JSON，不要其他内容。"""
+
+    try:
+        # 构建消息
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        
+        # 如果使用本地 LLM，检查并截断消息
+        if LOCAL_LLM:
+            max_input_tokens = int(MAX_CONTEXT_LENGTH * 0.8)
+            messages = truncate_messages_if_needed(messages, max_input_tokens)
+        
+        # 构建请求参数
+        request_params = {
+            "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
+            "messages": messages,
+            "temperature": 0.1  # 低温度，确保修复准确性
+        }
+        
+        if not LOCAL_LLM:
+            request_params["response_format"] = {"type": "json_object"}
+        else:
+            request_params["max_tokens"] = min(MAX_OUTPUT_TOKENS, 1024)  # 修复 JSON 通常不需要太多 token
+        
+        response = await client.chat.completions.create(**request_params)
+        
+        # 检查响应
+        if not response.choices or len(response.choices) == 0:
+            raise ValueError("LLM 响应为空")
+        
+        choice = response.choices[0]
+        repaired_content = choice.message.content
+        
+        if repaired_content is None:
+            raise ValueError("LLM 修复后的内容为空")
+        
+        print(f"🔧 LLM 已尝试修复 JSON，修复后的内容长度: {len(repaired_content)} 字符")
+        
+        # 尝试解析修复后的 JSON
+        try:
+            return json5.loads(repaired_content)
+        except:
+            try:
+                return json.loads(repaired_content)
+            except json.JSONDecodeError:
+                # 如果修复后仍然无效，尝试提取 JSON 对象
+                json_match = re.search(r'\{.*\}', repaired_content, re.DOTALL)
+                if json_match:
+                    try:
+                        return json5.loads(json_match.group(0))
+                    except:
+                        return json.loads(json_match.group(0))
+                raise ValueError("LLM 修复后的 JSON 仍然无效")
+    
+    except Exception as e:
+        print(f"❌ LLM 修复 JSON 失败: {e}")
+        raise
+
+
 MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() == "true"
+
 # 支持本地 LLM：如果 LOCAL_LLM 不为空，使用本地 API；否则使用 OpenAI
 LOCAL_LLM = os.getenv("LOCAL_LLM", "").strip()
+
 # Context length 配置（用于本地 LLM，如 Qwen2.5-7B）
 MAX_CONTEXT_LENGTH = int(os.getenv("MAX_CONTEXT_LENGTH", "4096"))  # 默认 4096 tokens
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "2048"))  # 默认输出最多 2048 tokens（增加以处理复杂 JSON）
+
+
 if not MOCK_MODE:
     if LOCAL_LLM:
         # 使用本地 LLM API（假设格式兼容 OpenAI）
@@ -175,7 +299,13 @@ def parse_content(content: str) -> Dict[str, Any]:
     return content
 
 async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str = "") -> Dict[str, Any]:
-    """生成结构化 JSON 输出"""
+    """生成结构化 JSON 输出
+    
+    Args:
+        system_prompt: 系统提示词
+        user_prompt: 用户提示词
+        schema_hint: JSON schema 提示，用于 LLM 修复时提供期望格式
+    """
     if MOCK_MODE:
         # Mock 返回示例数据
         return {
@@ -280,8 +410,45 @@ async def generate_npc_response(
 ) -> Dict[str, Any]:
     """NPC 独立人格对话生成"""
     
-    # 构建 NPC 系统提示（中文版）
-    system_prompt = f"""你是 {npc_name}，一个 MUD 游戏中的角色。请用中文回复。
+    # 构建 NPC 系统提示
+    if LOCAL_LLM:
+        # 简化版，针对本地小模型（如 Qwen2.5-7B），强调只返回单个 JSON
+        system_prompt = f"""!!!最重要的：返回的回复必须是一个JSON格式!!!
+你是 {npc_name}，一个 MUD 游戏中的角色。
+性格特点: {npc_personality}
+外貌描述: {npc_description}
+{f'背景故事: {scenario}' if scenario else ''}
+{f'对话风格示例:{chr(10).join(example_dialogs[:3])}' if example_dialogs else ''}
+世界背景: {world_context}
+
+请只返回一个 JSON 对象，且只返回 JSON。
+
+JSON 格式（必须严格遵守）：
+{{
+  "response": "你的角色回复（可以包含*动作*和『对话』）",
+  "emotion": "{'|'.join(EMOTION_LIST)}",
+  "relationship_change": -5 到 +5 的整数,
+  "internal_thought": "简短的内心独白"
+}}
+
+重要规则：
+1. 必须返回一个 JSON 对象
+2. 不要返回任何 JSON 之外的文本
+3. 保证字段齐全，字段名不要改动
+4. 情绪仅使用上述枚举值之一
+5. relationship_change 必须是整数
+6. response 里的 "对话" 前后的一定要用中文直角双引号『』
+
+示例1（请严格参考格式）：
+{{
+  "response": "*微笑* 『好的，我来帮你。』",
+  "emotion": "happy",
+  "relationship_change": 1,
+  "internal_thought": "他看起来值得信任。"
+}}"""
+    else:
+        # 详细版（OpenAI 等）
+        system_prompt = f"""你是 {npc_name}，一个 MUD 游戏中的角色。请用中文回复。
 
 性格特点: {npc_personality}
 
@@ -295,7 +462,7 @@ async def generate_npc_response(
 
 玩家输入格式说明：
 - *星号包裹* = 玩家的动作（例如：*微微点头*）
-- "双引号" = 玩家说的话（例如："你好"）
+- "双引号" = 玩家说的话（例如：『你好』"）
 - （圆括号）= 玩家给AI的指示，不是角色对话
 - ~波浪号~ = 拖长音
 
@@ -308,12 +475,12 @@ async def generate_npc_response(
 
 你的回复格式：
 - 用 *星号* 包裹你的动作和表情
-- 用 "引号" 或不带引号直接回复对话
+- 用 "中文双引号" 或不带引号直接回复对话
 
 用 JSON 格式回复:
 {{
-    "response": "你的角色内回复（可混合动作和对话，如：*微笑* \\"当然可以。\\"）",
-    "emotion": "default|happy|angry|sad|surprised|fearful",
+    "response": "你的角色内回复（可混合动作和对话，如：*微笑* 『当然可以』）",
+    "emotion": "{'|'.join(EMOTION_LIST)}",
     "relationship_change": -5 到 +5（这次互动如何影响你对玩家的感觉）,
     "internal_thought": "简短的内心独白（不会显示给玩家）"
 }}"""
@@ -371,230 +538,30 @@ async def generate_npc_response(
             print(f"⚠️  警告：LLM 响应异常结束 (finish_reason: {choice.finish_reason})")
     
     content = choice.message.content
+    print("--------------------------------")
+    print(f"NPC conversation content: {content}")
+    print("--------------------------------")
     if content is None:
         raise ValueError("LLM 响应内容为空")
-    
-    # 记录响应长度（用于调试）
+
+    # 如果本地 LLM 返回了多个 JSON 对象，取第一个
     if LOCAL_LLM:
-        print(f"📝 LLM 响应长度: {len(content)} 字符")
-    
-    # 清理和修复 JSON（本地 LLM 可能返回格式不正确的 JSON）
-    if LOCAL_LLM:
-        # 移除控制字符（除了换行符和制表符）
-        content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
-        
-        # 修复字符串值后多余的符号（如 ~ 在引号外）
-        content = re.sub(r'(")\s*~\s*([,}])', r'\1\2', content)  # "value" ~, 或 "value" ~}
-        content = re.sub(r'(")\s*~\s*$', r'\1', content, flags=re.MULTILINE)  # "value" ~ 在行尾
-        
-        # 替换 JSON 结构中的中文标点符号为英文标点
-        content = re.sub(r'(")\s*：\s*', r'\1: ', content)  # 中文冒号
-        content = re.sub(r'(")\s*，\s*', r'\1, ', content)  # 字符串后的中文逗号
-        content = re.sub(r'(\})\s*，\s*', r'\1, ', content)  # 对象后的中文逗号
-        content = re.sub(r'(\])\s*，\s*', r'\1, ', content)  # 数组后的中文逗号
-        content = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content)  # 值后的中文逗号
-        
-        # 修复字符串值中未转义的双引号（在初始清理阶段也应用）
-        def escape_quotes_in_json_initial(text):
-            result = []
-            i = 0
-            in_string = False
-            escape_next = False
-            
-            while i < len(text):
-                char = text[i]
-                
-                if escape_next:
-                    result.append(char)
-                    escape_next = False
-                    i += 1
-                    continue
-                
-                if char == '\\':
-                    result.append(char)
-                    escape_next = True
-                    i += 1
-                    continue
-                
-                if char == '"':
-                    if not in_string:
-                        # 字符串开始
-                        in_string = True
-                        result.append(char)
-                    else:
-                        # 检查下一个字符，判断是否是字符串结束
-                        # 跳过空白字符
-                        j = i + 1
-                        while j < len(text) and text[j] in ' \t\n\r':
-                            j += 1
-                        
-                        if j >= len(text):
-                            # 文件结束，这是字符串结束
-                            in_string = False
-                            result.append(char)
-                        else:
-                            next_char = text[j]
-                            # 如果下一个非空白字符是 : , } ] 或换行，说明这是字符串结束
-                            if next_char in ':},]' or next_char == '\n':
-                                in_string = False
-                                result.append(char)
-                            else:
-                                # 这是字符串值中的引号，需要转义
-                                result.append('\\"')
-                    i += 1
-                    continue
-                
-                result.append(char)
-                i += 1
-            
-            return ''.join(result)
-        
-        content = escape_quotes_in_json_initial(content)
-        
-        # 移除末尾的分隔线（调试输出可能被包含在响应中）
-        content = re.sub(r'\s*=+\s*$', '', content, flags=re.MULTILINE)
-        
-        # 尝试提取 JSON 对象（如果响应包含其他文本）
-        json_match = re.search(r'\{.*\}', content, re.DOTALL)
-        if json_match:
-            content = json_match.group(0)
-        else:
-            # 如果响应只是一个字符串（用引号包裹），尝试将其包装成 JSON 对象
-            content_stripped = content.strip()
-            if content_stripped.startswith('"') and content_stripped.endswith('"'):
-                # 这是一个字符串值，需要包装成 JSON 对象
-                try:
-                    # 先尝试解析字符串，如果成功，说明格式正确
-                    parsed_string = parse_json_with_fallback(content_stripped)
-                    # 包装成 JSON 对象
-                    content = json.dumps({
-                        "response": parsed_string,
-                        "emotion": "default",
-                        "relationship_change": 0,
-                        "internal_thought": ""
-                    }, ensure_ascii=False)
-                    print(f"⚠️  LLM 返回的是字符串值，已包装成 JSON 对象")
-                except json.JSONDecodeError:
-                    # 如果解析失败，说明字符串中包含未转义的控制字符
-                    # 手动处理：移除首尾引号，转义控制字符，重新包装
-                    inner_content = content_stripped[1:-1]
-                    # 转义控制字符（换行、回车、制表符）
-                    inner_content = inner_content.replace('\\', '\\\\')  # 先转义反斜杠
-                    inner_content = inner_content.replace('\n', '\\n')
-                    inner_content = inner_content.replace('\r', '\\r')
-                    inner_content = inner_content.replace('\t', '\\t')
-                    # 转义未转义的引号（但保留已转义的引号）
-                    # 注意：由于我们已经转义了反斜杠，所以需要小心处理
-                    inner_content = re.sub(r'(?<!\\)"', '\\"', inner_content)
-                    # 重新包装
-                    content = json.dumps({
-                        "response": inner_content,
-                        "emotion": "default",
-                        "relationship_change": 0,
-                        "internal_thought": ""
-                    }, ensure_ascii=False)
-                    print(f"⚠️  LLM 返回的是字符串值（包含控制字符），已修复并包装成 JSON 对象")
+        json_matches = re.findall(r'\{.*?\}', content, re.DOTALL)
+        if json_matches:
+            if len(json_matches) > 1:
+                print(f"⚠️  发现多个 JSON 对象，已取第一个，总数: {len(json_matches)}")
+            content = json_matches[0]
     
     try:
         return parse_json_with_fallback(content)
-    except (json.JSONDecodeError, json5.JSON5DecodeError, ValueError) as json_err:
-        # JSON 解析失败，尝试修复（使用与 generate_json 相同的修复逻辑）
-        if LOCAL_LLM:
-            print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
-            print(f"   原始内容前 300 字符: {content[:300]}")
-            print(f"   完整内容长度: {len(content)} 字符")
-            print(f"   完整内容:\n{content}")
-            print(f"   {'='*80}")
-            
-            # 尝试修复常见的 JSON 问题
-            content_fixed = content
-            
-            # 0. 修复字符串值后多余的符号（如 ~ 在引号外）
-            # 匹配 "field": "value" ~ 模式，移除引号后的 ~
-            content_fixed = re.sub(r'(")\s*~\s*([,}])', r'\1\2', content_fixed)  # "value" ~, 或 "value" ~}
-            content_fixed = re.sub(r'(")\s*~\s*$', r'\1', content_fixed, flags=re.MULTILINE)  # "value" ~ 在行尾
-            
-            # 1. 再次尝试替换中文标点
-            content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
-            content_fixed = re.sub(r'(")\s*，\s*', r'\1, ', content_fixed)  # 字符串后的中文逗号
-            content_fixed = re.sub(r'(\})\s*，\s*', r'\1, ', content_fixed)  # 对象后的中文逗号
-            content_fixed = re.sub(r'(\])\s*，\s*', r'\1, ', content_fixed)  # 数组后的中文逗号
-            content_fixed = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content_fixed)  # 值后的中文逗号
-            
-            # 2. 修复字符串值中未转义的双引号（必须在清理多余内容之后）
-            # 使用逐字符解析，转义字符串值中的引号
-            def escape_quotes_in_json(text):
-                result = []
-                i = 0
-                in_string = False
-                escape_next = False
-                
-                while i < len(text):
-                    char = text[i]
-                    
-                    if escape_next:
-                        result.append(char)
-                        escape_next = False
-                        i += 1
-                        continue
-                    
-                    if char == '\\':
-                        result.append(char)
-                        escape_next = True
-                        i += 1
-                        continue
-                    
-                    if char == '"':
-                        if not in_string:
-                            # 字符串开始
-                            in_string = True
-                            result.append(char)
-                        else:
-                            # 检查下一个字符，判断是否是字符串结束
-                            # 跳过空白字符
-                            j = i + 1
-                            while j < len(text) and text[j] in ' \t\n\r':
-                                j += 1
-                            
-                            if j >= len(text):
-                                # 文件结束，这是字符串结束
-                                in_string = False
-                                result.append(char)
-                            else:
-                                next_char = text[j]
-                                # 如果下一个非空白字符是 : , } ] 或换行，说明这是字符串结束
-                                if next_char in ':},]' or next_char == '\n':
-                                    in_string = False
-                                    result.append(char)
-                                else:
-                                    # 这是字符串值中的引号，需要转义
-                                    result.append('\\"')
-                        i += 1
-                        continue
-                    
-                    result.append(char)
-                    i += 1
-                
-                return ''.join(result)
-            
-            content_fixed = escape_quotes_in_json(content_fixed)
-            
-            # 2. 修复截断的 JSON
-            open_braces = content_fixed.count('{')
-            close_braces = content_fixed.count('}')
-            if open_braces > close_braces:
-                content_fixed += '\n' + '}' * (open_braces - close_braces)
-            
-            # 3. 清理非打印字符（保留中文）
-            content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\u4e00-\u9fff]', '', content_fixed)
-            json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
-            if json_match:
-                try:
-                    return parse_json_with_fallback(json_match.group(0))
-                except:
-                    pass
-            raise
-        raise
+    except Exception as json_err:
+        print(f"⚠️  JSON 解析失败，尝试使用 LLM 修复: {json_err}")
+        try:
+            # 尝试使用 LLM 修复 JSON
+            return await repair_json_with_llm(content, expected_schema="NPC 对话响应格式：{\"response\": \"...\", \"emotion\": \"...\", \"relationship_change\": 数字, \"internal_thought\": \"...\"}")
+        except Exception as repair_err:
+            print(f"❌  LLM 修复也失败: {repair_err}")
+            raise json_err
 
 
 async def generate_choices(
@@ -615,48 +582,48 @@ async def generate_choices(
     
     # 针对本地 LLM（如 Qwen2.5-7B）使用更简单、更明确的 prompt
     if LOCAL_LLM:
-        system_prompt = """你是一个游戏系统，必须返回有效的 JSON 格式。
+        system_prompt = f"""你是一个游戏系统，必须返回有效的 JSON 格式。
 
 任务：生成 3-4 个游戏选项，并安排角色位置。
 
 JSON 格式（必须严格遵守）：
-{
+{{
   "narrative": "简短描述当前情境",
   "choices": [
-    {"id": "1", "text": "选项1的文字", "hint": "提示或null"},
-    {"id": "2", "text": "选项2的文字", "hint": null},
-    {"id": "3", "text": "选项3的文字", "hint": null}
+    {{"id": "1", "text": "选项1的文字", "hint": "提示或null"}},
+    {{"id": "2", "text": "选项2的文字", "hint": null}},
+    {{"id": "3", "text": "选项3的文字", "hint": null}}
   ],
   "mood": "neutral",
-  "character_positions": {
+  "character_positions": {{
     "player": "left"
-  }
-}
+  }}
+}}
 
 重要规则：
 1. 只返回 JSON，不要其他文字
 2. text 字段必须是纯中文文本，不要代码
 3. id 必须是字符串 "1", "2", "3" 等
-4. mood 必须是: neutral, tense, calm, mysterious, action 之一
+4. mood 必须是: {'|'.join(EMOTION_LIST)} 之一
 5. character_positions 中 player 必须是: left, center, right 之一
 6. 如果有 NPC，添加 "npc_id": "left|center|right"
 7. hint 可以是字符串或 null
 
 示例（严格按照这个格式）：
-{
+{{
   "narrative": "你站在霓虹灯下，思考下一步行动",
   "choices": [
-    {"id": "1", "text": "继续前进", "hint": null},
-    {"id": "2", "text": "观察周围", "hint": "可能发现线索"},
-    {"id": "3", "text": "返回", "hint": null}
+    {{"id": "1", "text": "继续前进", "hint": null}},
+    {{"id": "2", "text": "观察周围", "hint": "可能发现线索"}},
+    {{"id": "3", "text": "返回", "hint": null}}
   ],
   "mood": "neutral",
-  "character_positions": {
+  "character_positions": {{
     "player": "center"
-  }
-}"""
+  }}
+}}"""
     else:
-        system_prompt = """你是一个 MUD 游戏的游戏大师。为玩家生成有意义的选项，并像视觉小说导演一样安排角色在画面中的位置。请用中文回复。
+        system_prompt = f"""你是一个 MUD 游戏的游戏大师。为玩家生成有意义的选项，并像视觉小说导演一样安排角色在画面中的位置。请用中文回复。
 
 规则:
 - 生成 3-4 个不同的、有意义的选项
@@ -689,20 +656,20 @@ JSON 格式（必须严格遵守）：
 - 多个角色时要合理分布
 
 用 JSON 格式回复:
-{
+{{
     "narrative": "当前时刻/情境的简短描述",
     "choices": [
-        {"id": "1", "text": "选项描述（纯文本，无代码）", "hint": "关于后果的可选提示"},
-        {"id": "2", "text": "选项描述（纯文本，无代码）", "hint": null},
+        {{"id": "1", "text": "选项描述（纯文本，无代码）", "hint": "关于后果的可选提示"}},
+        {{"id": "2", "text": "选项描述（纯文本，无代码）", "hint": null}},
         ...
     ],
-    "mood": "neutral|tense|calm|mysterious|action",
-    "character_positions": {
+    "mood": "{'|'.join(EMOTION_LIST)}",
+    "character_positions": {{
         "player": "left|center|right",
         "npc_id_1": "left|center|right",
         "npc_id_2": "left|center|right"
-    }
-}"""
+    }}
+}}"""
 
     # 针对本地 LLM 使用更简洁的 user_prompt
     if LOCAL_LLM:
@@ -744,13 +711,13 @@ JSON 格式（必须严格遵守）：
 RP_FORMAT_GUIDE = """
 玩家输入格式说明：
 - *星号包裹* = 动作或场景描写（例如：*缓缓走近，眼神警惕*）
-- "双引号" = 角色说的话（例如："你是谁？"）
+- 『中文直角双引号』 = 角色说的话（例如：『你是谁？』）
 - （圆括号）= 玩家意图/OOC指令（例如：（我想去酒吧找线索））
-- ~波浪号~ = 拖长音或特殊语气（例如："等一下~"）
+- ~波浪号~ = 拖长音或特殊语气（例如：『等一下~』）
 - **双星号** = 重点强调
 
 玩家可能混合使用这些格式，例如：
-*走向酒保* "来杯最烈的。" *把钱拍在桌上*
+*走向酒保* 『来杯最烈的。』 *把钱拍在桌上*
 
 你需要理解这些格式，并根据玩家的意图做出响应。
 """
@@ -972,93 +939,12 @@ async def judge_action(
     
     try:
         return parse_json_with_fallback(content)
-    except (json.JSONDecodeError, json5.JSON5DecodeError, ValueError) as json_err:
-        # JSON 解析失败，尝试修复（使用与 generate_json 相同的修复逻辑）
-        if LOCAL_LLM:
-            print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
-            print(f"   原始内容前 300 字符: {content[:300]}")
-            print(f"   完整内容长度: {len(content)} 字符")
-            print(f"   完整内容:\n{content}")
-            print(f"   {'='*80}")
-            
-            # 0. 再次尝试替换中文标点（必须在转义引号之前）
-            content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
-            content_fixed = re.sub(r'(")\s*，\s*', r'\1, ', content_fixed)  # 字符串后的中文逗号
-            content_fixed = re.sub(r'(\})\s*，\s*', r'\1, ', content_fixed)  # 对象后的中文逗号
-            content_fixed = re.sub(r'(\])\s*，\s*', r'\1, ', content_fixed)  # 数组后的中文逗号
-            content_fixed = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content_fixed)  # 值后的中文逗号
-            
-            # 1. 修复字符串值中未转义的双引号
-            # 使用逐字符解析，转义字符串值中的引号
-            def escape_quotes_in_json(text):
-                result = []
-                i = 0
-                in_string = False
-                escape_next = False
-                
-                while i < len(text):
-                    char = text[i]
-                    
-                    if escape_next:
-                        result.append(char)
-                        escape_next = False
-                        i += 1
-                        continue
-                    
-                    if char == '\\':
-                        result.append(char)
-                        escape_next = True
-                        i += 1
-                        continue
-                    
-                    if char == '"':
-                        if not in_string:
-                            # 字符串开始
-                            in_string = True
-                            result.append(char)
-                        else:
-                            # 检查下一个字符，判断是否是字符串结束
-                            # 跳过空白字符
-                            j = i + 1
-                            while j < len(text) and text[j] in ' \t\n\r':
-                                j += 1
-                            
-                            if j >= len(text):
-                                # 文件结束，这是字符串结束
-                                in_string = False
-                                result.append(char)
-                            else:
-                                next_char = text[j]
-                                # 如果下一个非空白字符是 : , } ] 或换行，说明这是字符串结束
-                                if next_char in ':},]' or next_char == '\n':
-                                    in_string = False
-                                    result.append(char)
-                                else:
-                                    # 这是字符串值中的引号，需要转义
-                                    result.append('\\"')
-                        i += 1
-                        continue
-                    
-                    result.append(char)
-                    i += 1
-                
-                return ''.join(result)
-            
-            content_fixed = escape_quotes_in_json(content_fixed)
-            
-            # 2. 修复截断的 JSON
-            open_braces = content_fixed.count('{')
-            close_braces = content_fixed.count('}')
-            if open_braces > close_braces:
-                content_fixed += '\n' + '}' * (open_braces - close_braces)
-            
-            # 3. 清理非打印字符（保留中文）
-            content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\u4e00-\u9fff]', '', content_fixed)
-            json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
-            if json_match:
-                try:
-                    return parse_json_with_fallback(json_match.group(0))
-                except:
-                    pass
-            raise
-        raise
+    except Exception as e:
+        print(f"⚠️  JSON 解析失败，尝试使用 LLM 修复: {e}")
+        try:
+            # 尝试使用 LLM 修复 JSON
+            expected_schema = schema_hint if schema_hint else "游戏选项响应格式：{\"narrative\": \"...\", \"choices\": [...], \"mood\": \"...\", \"character_positions\": {...}}"
+            return await repair_json_with_llm(content, expected_schema=expected_schema)
+        except Exception as repair_err:
+            print(f"❌  LLM 修复也失败: {repair_err}")
+            raise e
