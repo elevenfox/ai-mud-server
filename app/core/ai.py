@@ -704,7 +704,21 @@ JSON 格式（必须严格遵守）：
     }
 }"""
 
-    user_prompt = f"""世界规则:
+    # 针对本地 LLM 使用更简洁的 user_prompt
+    if LOCAL_LLM:
+        user_prompt = f"""生成游戏选项。
+
+世界规则: {', '.join(world_rules[:3]) if world_rules else '无特殊规则'}
+
+当前情境: {current_situation[:200]}{npc_info[:100]}
+
+玩家状态: 货币={player_stats.get('currency', 0)}, 宝石={player_stats.get('gems', 0)}
+
+{f'NPC列表: {[npc.get("id") for npc in npcs_in_scene]}' if npcs_in_scene else '无NPC'}
+
+请严格按照 JSON 格式返回，只返回 JSON，不要其他文字。"""
+    else:
+        user_prompt = f"""世界规则:
 {chr(10).join(f'- {rule}' for rule in world_rules)}
 
 当前情境:
