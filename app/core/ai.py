@@ -202,10 +202,14 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
                 print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
                 print(f"   原始内容前 300 字符: {content[:300]}")
                 
-                # 尝试修复常见的 JSON 问题
-                content_fixed = content
-                
-                # 0. 再次尝试替换中文标点（可能在第一次清理时遗漏）
+            # 尝试修复常见的 JSON 问题
+            content_fixed = content
+            
+            # 0. 修复字符串值后多余的符号（如 ~ 在引号外）
+            content_fixed = re.sub(r'(")\s*~\s*([,}])', r'\1\2', content_fixed)  # "value" ~, 或 "value" ~}
+            content_fixed = re.sub(r'(")\s*~\s*$', r'\1', content_fixed, flags=re.MULTILINE)  # "value" ~ 在行尾
+            
+            # 1. 再次尝试替换中文标点（可能在第一次清理时遗漏）
                 content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
                 content_fixed = re.sub(r'(")\s*，\s*', r'\1, ', content_fixed)  # 字符串后的中文逗号
                 content_fixed = re.sub(r'(\})\s*，\s*', r'\1, ', content_fixed)  # 对象后的中文逗号
@@ -440,14 +444,19 @@ async def generate_npc_response(
             # 尝试修复常见的 JSON 问题
             content_fixed = content
             
-            # 0. 再次尝试替换中文标点
+            # 0. 修复字符串值后多余的符号（如 ~ 在引号外）
+            # 匹配 "field": "value" ~ 模式，移除引号后的 ~
+            content_fixed = re.sub(r'(")\s*~\s*([,}])', r'\1\2', content_fixed)  # "value" ~, 或 "value" ~}
+            content_fixed = re.sub(r'(")\s*~\s*$', r'\1', content_fixed, flags=re.MULTILINE)  # "value" ~ 在行尾
+            
+            # 1. 再次尝试替换中文标点
             content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
             content_fixed = re.sub(r'(")\s*，\s*', r'\1, ', content_fixed)  # 字符串后的中文逗号
             content_fixed = re.sub(r'(\})\s*，\s*', r'\1, ', content_fixed)  # 对象后的中文逗号
             content_fixed = re.sub(r'(\])\s*，\s*', r'\1, ', content_fixed)  # 数组后的中文逗号
             content_fixed = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content_fixed)  # 值后的中文逗号
             
-            # 1. 修复字符串值中未转义的双引号
+            # 2. 修复字符串值中未转义的双引号
             # 使用逐字符解析，转义字符串值中的引号
             def escape_quotes_in_json(text):
                 result = []
