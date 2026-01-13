@@ -196,9 +196,12 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             
             # 3. 清理字符串值中的 JavaScript 代码片段（在初始清理阶段）
             # 移除 JavaScript 字符串连接操作符和代码片段
-            content = re.sub(r'(")\s*\+\s*\([^)]+\)\s*\?[^"]*"[^"]*"[^"]*\)', r'\1', content)  # 移除 JavaScript 三元表达式
-            content = re.sub(r'(")\s*\+\s*\([^)]+\)', r'\1', content)  # 移除 JavaScript 函数调用
-            content = re.sub(r'(")\s*\+\s*"[^"]*"', r'\1', content)  # 移除字符串连接
+            # 模式1: "text" + (condition ? "..." : "...") - 移除整个三元表达式，闭合引号
+            content = re.sub(r'(")\s*\+\s*\([^)]*\)\s*\?[^"]*"[^"]*"[^)]*\)', r'\1"', content)
+            # 模式2: "text" + function_call() - 移除函数调用，闭合引号
+            content = re.sub(r'(")\s*\+\s*\([^)]+\)', r'\1"', content)
+            # 模式3: "text" + "more text" - 移除字符串连接，闭合引号
+            content = re.sub(r'(")\s*\+\s*"[^"]*"', r'\1"', content)
             
             # 4. 修复嵌套对象结构错误（在初始清理阶段）
             content = re.sub(r'\{\s*\{', r'{', content)  # { { -> {
@@ -343,10 +346,12 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             
             # 0.6. 清理字符串值中的 JavaScript 代码片段
             # 移除 JavaScript 字符串连接操作符和代码片段
-            # 模式：字符串值中的 " + (condition ? "..." : "...") 或类似的 JavaScript 代码
-            content_fixed = re.sub(r'(")\s*\+\s*\([^)]+\)\s*\?[^"]*"[^"]*"[^"]*\)', r'\1', content_fixed)  # 移除 JavaScript 三元表达式
-            content_fixed = re.sub(r'(")\s*\+\s*\([^)]+\)', r'\1', content_fixed)  # 移除 JavaScript 函数调用
-            content_fixed = re.sub(r'(")\s*\+\s*"[^"]*"', r'\1', content_fixed)  # 移除字符串连接
+            # 模式1: "text" + (condition ? "..." : "...") - 移除整个三元表达式，闭合引号
+            content_fixed = re.sub(r'(")\s*\+\s*\([^)]*\)\s*\?[^"]*"[^"]*"[^)]*\)', r'\1"', content_fixed)
+            # 模式2: "text" + function_call() - 移除函数调用，闭合引号
+            content_fixed = re.sub(r'(")\s*\+\s*\([^)]+\)', r'\1"', content_fixed)
+            # 模式3: "text" + "more text" - 移除字符串连接，闭合引号
+            content_fixed = re.sub(r'(")\s*\+\s*"[^"]*"', r'\1"', content_fixed)
             
             # 0.7. 修复嵌套对象结构错误（如 { { "key": "value" } }）
             # 移除多余的开括号
