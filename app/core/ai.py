@@ -268,6 +268,9 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             
             content = escape_quotes_in_json_initial(content)
             
+            # 移除末尾的分隔线（调试输出可能被包含在响应中）
+            content = re.sub(r'\s*=+\s*$', '', content, flags=re.MULTILINE)
+            
             # 尝试提取 JSON 对象（如果响应包含其他文本）
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
             if json_match:
@@ -642,6 +645,9 @@ async def generate_npc_response(
             return ''.join(result)
         
         content = escape_quotes_in_json_initial(content)
+        
+        # 移除末尾的分隔线（调试输出可能被包含在响应中）
+        content = re.sub(r'\s*=+\s*$', '', content, flags=re.MULTILINE)
         
         # 尝试提取 JSON 对象（如果响应包含其他文本）
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
@@ -1036,6 +1042,9 @@ async def judge_action(
         content = re.sub(r'(\})\s*，\s*', r'\1, ', content)  # 对象后的中文逗号
         content = re.sub(r'(\])\s*，\s*', r'\1, ', content)  # 数组后的中文逗号
         content = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content)  # 值后的中文逗号
+        
+        # 移除末尾的分隔线（调试输出可能被包含在响应中）
+        content = re.sub(r'\s*=+\s*$', '', content, flags=re.MULTILINE)
         
         # 尝试提取 JSON 对象（如果响应包含其他文本）
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
