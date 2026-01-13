@@ -171,8 +171,9 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
         
         # 清理和修复 JSON（本地 LLM 可能返回格式不正确的 JSON）
         if LOCAL_LLM:
-            # 移除控制字符（除了换行符和制表符）
-            content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
+            # 移除控制字符（除了换行符、制表符和回车符）
+            # 注意：JSON 字符串值中的换行符应该被转义为 \n，但结构中的换行符是允许的
+            content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f]', '', content)
             
             # 修复字符串值后多余的符号（如 ~ 在引号外）
             content = re.sub(r'(")\s*~\s*([,}])', r'\1\2', content)  # "value" ~, 或 "value" ~}
@@ -440,8 +441,9 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             if open_braces > close_braces:
                 content_fixed += '\n' + '}' * (open_braces - close_braces)
             
-            # 6. 尝试移除所有非打印字符（除了必要的）
-            content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\u4e00-\u9fff]', '', content_fixed)
+            # 6. 清理非打印字符（保留中文、换行符、制表符、回车符）
+            # 移除所有控制字符（0x00-0x1F 和 0x7F-0x9F），但保留 \n, \t, \r
+            content_cleaned = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f]', '', content_fixed)
             
             # 7. 再次尝试提取 JSON
             json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
