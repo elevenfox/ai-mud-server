@@ -10,6 +10,9 @@ load_dotenv()
 MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() == "true"
 # 支持本地 LLM：如果 LOCAL_LLM 不为空，使用本地 API；否则使用 OpenAI
 LOCAL_LLM = os.getenv("LOCAL_LLM", "").strip()
+# Context length 配置（用于本地 LLM，如 Qwen2.5-7B）
+MAX_CONTEXT_LENGTH = int(os.getenv("MAX_CONTEXT_LENGTH", "4096"))  # 默认 4096 tokens
+MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "1024"))  # 默认输出最多 1024 tokens
 if not MOCK_MODE:
     if LOCAL_LLM:
         # 使用本地 LLM API（假设格式兼容 OpenAI）
@@ -19,6 +22,8 @@ if not MOCK_MODE:
             base_url = f"{base_url}/v1"
         
         print(f"🔧 使用本地 LLM API: {base_url}")
+        print(f"   Context Length: {MAX_CONTEXT_LENGTH} tokens")
+        print(f"   Max Output Tokens: {MAX_OUTPUT_TOKENS} tokens")
         client = AsyncOpenAI(
             api_key=os.getenv("OPENAI_API_KEY", "not-needed"),  # 本地 LLM 可能不需要 key
             base_url=base_url,
@@ -33,19 +38,86 @@ else:
     print("🔧 使用 MOCK 模式")
 
 
+def estimate_tokens(text: str) -> int:
+    """估算文本的 token 数量（中文约 1-2 字符/token，英文约 4 字符/token）"""
+    # 简单估算：中文字符数 + 英文单词数 * 1.3
+    chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+    english_chars = len(re.findall(r'[a-zA-Z]', text))
+    # 中文字符按 1.5 tokens/字符，英文按 0.25 tokens/字符估算
+    return int(chinese_chars * 1.5 + english_chars * 0.25 + len(text) * 0.1)
+
+
+def truncate_messages_if_needed(messages: List[Dict[str, str]], max_tokens: int) -> List[Dict[str, str]]:
+    """如果消息总长度超过限制，截断对话历史（保留 system 和最新的 user 消息）"""
+    if not LOCAL_LLM:
+        return messages  # OpenAI 不需要手动截断
+    
+    total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages)
+    if total_tokens <= max_tokens:
+        return messages
+    
+    # 保留 system 消息和最后一个 user 消息
+    system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
+    last_user_msg = None
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            last_user_msg = msg
+            break
+    
+    # 从中间的消息开始截断（保留最近的几条）
+    truncated = []
+    if system_msg:
+        truncated.append(system_msg)
+    
+    # 保留最近的几条消息（除了最后一个 user）
+    remaining_tokens = max_tokens - estimate_tokens(system_msg.get("content", "") if system_msg else "")
+    if last_user_msg:
+        remaining_tokens -= estimate_tokens(last_user_msg.get("content", ""))
+    
+    # 从后往前添加消息，直到达到限制
+    for msg in reversed(messages[1:] if system_msg else messages):
+        if msg == last_user_msg:
+            continue
+        msg_tokens = estimate_tokens(msg.get("content", ""))
+        if remaining_tokens >= msg_tokens:
+            truncated.insert(1, msg)  # 插入到 system 之后
+            remaining_tokens -= msg_tokens
+        else:
+            break
+    
+    if last_user_msg:
+        truncated.append(last_user_msg)
+    
+    return truncated
+
+
 async def generate_narrative(system_prompt: str, user_prompt: str) -> str:
     """通用 AI 文本生成"""
     if MOCK_MODE:
         return f"[MOCK] 系统提示: {system_prompt[:50]}... | 用户: {user_prompt[:50]}..."
     
-    response = await client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        temperature=0.7
-    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+    
+    # 如果使用本地 LLM，检查并截断消息
+    if LOCAL_LLM:
+        # 预留空间给输出（约 20%）
+        max_input_tokens = int(MAX_CONTEXT_LENGTH * 0.8)
+        messages = truncate_messages_if_needed(messages, max_input_tokens)
+    
+    request_params = {
+        "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
+        "messages": messages,
+        "temperature": 0.7
+    }
+    
+    # 本地 LLM 设置 max_tokens
+    if LOCAL_LLM:
+        request_params["max_tokens"] = MAX_OUTPUT_TOKENS
+    
+    response = await client.chat.completions.create(**request_params)
     return response.choices[0].message.content
 
 
@@ -228,7 +300,9 @@ async def generate_npc_response(
 
     # 构建对话历史
     messages = [{"role": "system", "content": system_prompt}]
-    for msg in conversation_history[-10:]:  # 最近 10 条
+    # 限制对话历史长度（根据 context length 动态调整）
+    history_limit = 20 if not LOCAL_LLM else 10  # 本地 LLM 使用更少的历史
+    for msg in conversation_history[-history_limit:]:  # 最近 N 条
         role = "assistant" if msg["role"] == "npc" else "user"
         messages.append({"role": role, "content": msg["content"]})
     messages.append({"role": "user", "content": player_message})
@@ -241,6 +315,12 @@ async def generate_npc_response(
             "internal_thought": "[MOCK] 内心想法..."
         }
     
+    # 如果使用本地 LLM，检查并截断消息
+    if LOCAL_LLM:
+        # 预留空间给输出（约 20%）
+        max_input_tokens = int(MAX_CONTEXT_LENGTH * 0.8)
+        messages = truncate_messages_if_needed(messages, max_input_tokens)
+    
     # 构建请求参数
     request_params = {
         "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
@@ -250,6 +330,9 @@ async def generate_npc_response(
     # 本地 LLM 可能不支持 response_format，完全不传递该参数
     if not LOCAL_LLM:
         request_params["response_format"] = {"type": "json_object"}
+    else:
+        # 本地 LLM 设置 max_tokens
+        request_params["max_tokens"] = MAX_OUTPUT_TOKENS
     
     response = await client.chat.completions.create(**request_params)
     content = response.choices[0].message.content
@@ -528,18 +611,30 @@ async def judge_action(
             }
         }
     
+    # 构建消息
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+    
+    # 如果使用本地 LLM，检查并截断消息
+    if LOCAL_LLM:
+        # 预留空间给输出（约 20%）
+        max_input_tokens = int(MAX_CONTEXT_LENGTH * 0.8)
+        messages = truncate_messages_if_needed(messages, max_input_tokens)
+    
     # 构建请求参数
     request_params = {
         "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
+        "messages": messages,
         "temperature": 0.3  # 低温度，更确定性
     }
     # 本地 LLM 可能不支持 response_format，完全不传递该参数
     if not LOCAL_LLM:
         request_params["response_format"] = {"type": "json_object"}
+    else:
+        # 本地 LLM 设置 max_tokens
+        request_params["max_tokens"] = MAX_OUTPUT_TOKENS
     
     response = await client.chat.completions.create(**request_params)
     content = response.choices[0].message.content
