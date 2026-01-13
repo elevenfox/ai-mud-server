@@ -421,12 +421,74 @@ async def generate_npc_response(
     if LOCAL_LLM:
         # 移除控制字符（除了换行符和制表符）
         content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
+        
+        # 修复字符串值后多余的符号（如 ~ 在引号外）
+        content = re.sub(r'(")\s*~\s*([,}])', r'\1\2', content)  # "value" ~, 或 "value" ~}
+        content = re.sub(r'(")\s*~\s*$', r'\1', content, flags=re.MULTILINE)  # "value" ~ 在行尾
+        
         # 替换 JSON 结构中的中文标点符号为英文标点
         content = re.sub(r'(")\s*：\s*', r'\1: ', content)  # 中文冒号
         content = re.sub(r'(")\s*，\s*', r'\1, ', content)  # 字符串后的中文逗号
         content = re.sub(r'(\})\s*，\s*', r'\1, ', content)  # 对象后的中文逗号
         content = re.sub(r'(\])\s*，\s*', r'\1, ', content)  # 数组后的中文逗号
         content = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content)  # 值后的中文逗号
+        
+        # 修复字符串值中未转义的双引号（在初始清理阶段也应用）
+        def escape_quotes_in_json_initial(text):
+            result = []
+            i = 0
+            in_string = False
+            escape_next = False
+            
+            while i < len(text):
+                char = text[i]
+                
+                if escape_next:
+                    result.append(char)
+                    escape_next = False
+                    i += 1
+                    continue
+                
+                if char == '\\':
+                    result.append(char)
+                    escape_next = True
+                    i += 1
+                    continue
+                
+                if char == '"':
+                    if not in_string:
+                        # 字符串开始
+                        in_string = True
+                        result.append(char)
+                    else:
+                        # 检查下一个字符，判断是否是字符串结束
+                        # 跳过空白字符
+                        j = i + 1
+                        while j < len(text) and text[j] in ' \t\n\r':
+                            j += 1
+                        
+                        if j >= len(text):
+                            # 文件结束，这是字符串结束
+                            in_string = False
+                            result.append(char)
+                        else:
+                            next_char = text[j]
+                            # 如果下一个非空白字符是 : , } ] 或换行，说明这是字符串结束
+                            if next_char in ':},]' or next_char == '\n':
+                                in_string = False
+                                result.append(char)
+                            else:
+                                # 这是字符串值中的引号，需要转义
+                                result.append('\\"')
+                    i += 1
+                    continue
+                
+                result.append(char)
+                i += 1
+            
+            return ''.join(result)
+        
+        content = escape_quotes_in_json_initial(content)
         
         # 尝试提取 JSON 对象（如果响应包含其他文本）
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
