@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from typing import Optional, List, Dict, Any
@@ -82,7 +83,34 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             request_params["response_format"] = {"type": "json_object"}
         
         response = await client.chat.completions.create(**request_params)
-        return json.loads(response.choices[0].message.content)
+        content = response.choices[0].message.content
+        
+        # 清理 JSON 字符串中的控制字符（本地 LLM 可能返回包含控制字符的 JSON）
+        if LOCAL_LLM:
+            # 移除控制字符（除了换行符和制表符，它们在 JSON 字符串中需要转义）
+            # 保留 \n 和 \t，但移除其他控制字符
+            content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
+            # 尝试提取 JSON 对象（如果响应包含其他文本）
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
+        
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as json_err:
+            # JSON 解析失败，尝试进一步清理
+            if LOCAL_LLM:
+                print(f"⚠️  JSON 解析失败，尝试清理响应: {json_err}")
+                print(f"   原始内容前 200 字符: {content[:200]}")
+                # 尝试移除所有非打印字符
+                content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r]', '', content)
+                json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
+                if json_match:
+                    try:
+                        return json.loads(json_match.group(0))
+                    except:
+                        pass
+            raise
     except Exception as e:
         error_msg = str(e)
         if LOCAL_LLM:
@@ -172,7 +200,33 @@ async def generate_npc_response(
         request_params["response_format"] = {"type": "json_object"}
     
     response = await client.chat.completions.create(**request_params)
-    return json.loads(response.choices[0].message.content)
+    content = response.choices[0].message.content
+    
+    # 清理 JSON 字符串中的控制字符（本地 LLM 可能返回包含控制字符的 JSON）
+    if LOCAL_LLM:
+        # 移除控制字符（除了换行符和制表符，它们在 JSON 字符串中需要转义）
+        content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
+        # 尝试提取 JSON 对象（如果响应包含其他文本）
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(0)
+    
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as json_err:
+        # JSON 解析失败，尝试进一步清理
+        if LOCAL_LLM:
+            print(f"⚠️  JSON 解析失败，尝试清理响应: {json_err}")
+            print(f"   原始内容前 200 字符: {content[:200]}")
+            # 尝试移除所有非打印字符
+            content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r]', '', content)
+            json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group(0))
+                except:
+                    pass
+        raise
 
 
 async def generate_choices(
@@ -427,4 +481,30 @@ async def judge_action(
         request_params["response_format"] = {"type": "json_object"}
     
     response = await client.chat.completions.create(**request_params)
-    return json.loads(response.choices[0].message.content)
+    content = response.choices[0].message.content
+    
+    # 清理 JSON 字符串中的控制字符（本地 LLM 可能返回包含控制字符的 JSON）
+    if LOCAL_LLM:
+        # 移除控制字符（除了换行符和制表符，它们在 JSON 字符串中需要转义）
+        content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
+        # 尝试提取 JSON 对象（如果响应包含其他文本）
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(0)
+    
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as json_err:
+        # JSON 解析失败，尝试进一步清理
+        if LOCAL_LLM:
+            print(f"⚠️  JSON 解析失败，尝试清理响应: {json_err}")
+            print(f"   原始内容前 200 字符: {content[:200]}")
+            # 尝试移除所有非打印字符
+            content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r]', '', content)
+            json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group(0))
+                except:
+                    pass
+        raise
