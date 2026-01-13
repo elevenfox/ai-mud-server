@@ -173,6 +173,22 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
         if LOCAL_LLM:
             # 移除控制字符（除了换行符和制表符）
             content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
+            # 替换 JSON 结构中的中文标点符号为英文标点
+            # 注意：只替换 JSON 结构中的标点，不替换字符串值内的标点
+            
+            # 1. 替换键后的中文冒号为英文冒号（"key"： -> "key":）
+            content = re.sub(r'(")\s*：\s*', r'\1: ', content)
+            
+            # 2. 替换值后的中文逗号为英文逗号（在字符串值、对象、数组后）
+            # 模式：字符串值 "value"，  -> "value",
+            content = re.sub(r'(")\s*，\s*', r'\1, ', content)
+            # 模式：对象 }，  -> },
+            content = re.sub(r'(\})\s*，\s*', r'\1, ', content)
+            # 模式：数组 ]，  -> ],
+            content = re.sub(r'(\])\s*，\s*', r'\1, ', content)
+            # 模式：数字或布尔值后的中文逗号
+            content = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content)
+            
             # 尝试提取 JSON 对象（如果响应包含其他文本）
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
             if json_match:
@@ -188,6 +204,13 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
                 
                 # 尝试修复常见的 JSON 问题
                 content_fixed = content
+                
+                # 0. 再次尝试替换中文标点（可能在第一次清理时遗漏）
+                content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
+                content_fixed = re.sub(r'(")\s*，\s*', r'\1, ', content_fixed)  # 字符串后的中文逗号
+                content_fixed = re.sub(r'(\})\s*，\s*', r'\1, ', content_fixed)  # 对象后的中文逗号
+                content_fixed = re.sub(r'(\])\s*，\s*', r'\1, ', content_fixed)  # 数组后的中文逗号
+                content_fixed = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content_fixed)  # 值后的中文逗号
                 
                 # 1. 如果 JSON 被截断，尝试修复未闭合的字符串和数组
                 # 首先检查是否有未闭合的字符串值
