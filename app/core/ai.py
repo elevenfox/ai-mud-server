@@ -194,7 +194,21 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             # 模式：数字或布尔值后的中文逗号
             content = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content)
             
-            # 3. 修复字符串值中未转义的双引号（在初始清理阶段也应用）
+            # 3. 清理字符串值中的 JavaScript 代码片段（在初始清理阶段）
+            # 移除 JavaScript 字符串连接操作符和代码片段
+            content = re.sub(r'(")\s*\+\s*\([^)]+\)\s*\?[^"]*"[^"]*"[^"]*\)', r'\1', content)  # 移除 JavaScript 三元表达式
+            content = re.sub(r'(")\s*\+\s*\([^)]+\)', r'\1', content)  # 移除 JavaScript 函数调用
+            content = re.sub(r'(")\s*\+\s*"[^"]*"', r'\1', content)  # 移除字符串连接
+            
+            # 4. 修复嵌套对象结构错误（在初始清理阶段）
+            content = re.sub(r'\{\s*\{', r'{', content)  # { { -> {
+            content = re.sub(r'\}\s*\}', r'}', content)  # } } -> }
+            
+            # 5. 修复数组末尾的多余逗号（在初始清理阶段）
+            content = re.sub(r',\s*\]', r']', content)  # , ] -> ]
+            content = re.sub(r',\s*\}', r'}', content)  # , } -> }
+            
+            # 6. 修复字符串值中未转义的双引号（在初始清理阶段也应用）
             def escape_quotes_in_json_initial(text):
                 result = []
                 i = 0
@@ -326,6 +340,22 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             content_fixed = re.sub(r'(")\s*~\s*$', r'\1', content_fixed, flags=re.MULTILINE)  # "value" ~ 在行尾
             # 移除字符串值后的非 JSON 内容（如 *text*）
             content_fixed = re.sub(r'(")\s+(\*[^*]+\*|\S+)', r'\1', content_fixed)  # 移除字符串值后的非 JSON 内容
+            
+            # 0.6. 清理字符串值中的 JavaScript 代码片段
+            # 移除 JavaScript 字符串连接操作符和代码片段
+            # 模式：字符串值中的 " + (condition ? "..." : "...") 或类似的 JavaScript 代码
+            content_fixed = re.sub(r'(")\s*\+\s*\([^)]+\)\s*\?[^"]*"[^"]*"[^"]*\)', r'\1', content_fixed)  # 移除 JavaScript 三元表达式
+            content_fixed = re.sub(r'(")\s*\+\s*\([^)]+\)', r'\1', content_fixed)  # 移除 JavaScript 函数调用
+            content_fixed = re.sub(r'(")\s*\+\s*"[^"]*"', r'\1', content_fixed)  # 移除字符串连接
+            
+            # 0.7. 修复嵌套对象结构错误（如 { { "key": "value" } }）
+            # 移除多余的开括号
+            content_fixed = re.sub(r'\{\s*\{', r'{', content_fixed)  # { { -> {
+            content_fixed = re.sub(r'\}\s*\}', r'}', content_fixed)  # } } -> }
+            
+            # 0.8. 修复数组末尾的多余逗号（如 [1, 2, 3, ]）
+            content_fixed = re.sub(r',\s*\]', r']', content_fixed)  # , ] -> ]
+            content_fixed = re.sub(r',\s*\}', r'}', content_fixed)  # , } -> }
             
             # 1. 再次尝试替换中文标点（可能在第一次清理时遗漏）
             content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
