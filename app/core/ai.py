@@ -85,10 +85,9 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
         response = await client.chat.completions.create(**request_params)
         content = response.choices[0].message.content
         
-        # 清理 JSON 字符串中的控制字符（本地 LLM 可能返回包含控制字符的 JSON）
+        # 清理和修复 JSON（本地 LLM 可能返回格式不正确的 JSON）
         if LOCAL_LLM:
-            # 移除控制字符（除了换行符和制表符，它们在 JSON 字符串中需要转义）
-            # 保留 \n 和 \t，但移除其他控制字符
+            # 移除控制字符（除了换行符和制表符）
             content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
             # 尝试提取 JSON 对象（如果响应包含其他文本）
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
@@ -98,18 +97,71 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
         try:
             return json.loads(content)
         except json.JSONDecodeError as json_err:
-            # JSON 解析失败，尝试进一步清理
+            # JSON 解析失败，尝试修复
             if LOCAL_LLM:
-                print(f"⚠️  JSON 解析失败，尝试清理响应: {json_err}")
-                print(f"   原始内容前 200 字符: {content[:200]}")
-                # 尝试移除所有非打印字符
-                content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r]', '', content)
+                print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
+                print(f"   原始内容前 300 字符: {content[:300]}")
+                
+                # 尝试修复常见的 JSON 问题
+                content_fixed = content
+                
+                # 1. 如果 JSON 被截断，尝试修复未闭合的字符串
+                # 查找最后一个未闭合的字符串值
+                # 匹配模式: "key": "value (可能未闭合)
+                unclosed_string_pattern = r'":\s*"([^"]*)$'
+                match = re.search(unclosed_string_pattern, content_fixed)
+                if match:
+                    # 找到未闭合的字符串，闭合它
+                    unclosed_value = match.group(1)
+                    # 移除未闭合的值，闭合字符串和 JSON
+                    content_fixed = content_fixed[:match.start()] + '": "' + unclosed_value.replace('"', '\\"') + '"\n}'
+                else:
+                    # 如果没有找到未闭合的字符串，检查是否有未闭合的键值对
+                    # 查找最后一个逗号，移除后面的不完整内容
+                    last_comma = content_fixed.rfind(',')
+                    if last_comma > 0:
+                        # 检查逗号后是否有完整的键值对
+                        after_comma = content_fixed[last_comma+1:].strip()
+                        if not after_comma or not (after_comma.startswith('"') and '"' in after_comma[1:]):
+                            # 移除最后一个不完整的键值对
+                            content_fixed = content_fixed[:last_comma].rstrip() + '\n}'
+                
+                # 2. 如果仍然不完整，尝试添加闭合括号
+                open_braces = content_fixed.count('{')
+                close_braces = content_fixed.count('}')
+                if open_braces > close_braces:
+                    content_fixed += '\n' + '}' * (open_braces - close_braces)
+                
+                # 3. 尝试移除所有非打印字符（除了必要的）
+                content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\u4e00-\u9fff]', '', content_fixed)
+                
+                # 4. 再次尝试提取 JSON
                 json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
                 if json_match:
                     try:
                         return json.loads(json_match.group(0))
-                    except:
+                    except json.JSONDecodeError:
                         pass
+                
+                # 5. 最后尝试：如果 JSON 字符串中有未转义的换行，尝试修复
+                # 在字符串值中的换行符应该被转义为 \n
+                try:
+                    # 尝试找到并修复字符串中的换行符
+                    def fix_string_newlines(match):
+                        # 匹配 JSON 字符串值
+                        full_match = match.group(0)
+                        # 如果字符串中有未转义的换行，转义它们
+                        if '\n' in full_match and '\\n' not in full_match:
+                            return full_match.replace('\n', '\\n')
+                        return full_match
+                    
+                    # 匹配 JSON 字符串值（"key": "value"）
+                    content_fixed = re.sub(r'":\s*"[^"]*"', fix_string_newlines, content_fixed)
+                    return json.loads(content_fixed)
+                except:
+                    pass
+                
+                print(f"❌ 无法修复 JSON，原始错误: {json_err}")
             raise
     except Exception as e:
         error_msg = str(e)
@@ -202,9 +254,9 @@ async def generate_npc_response(
     response = await client.chat.completions.create(**request_params)
     content = response.choices[0].message.content
     
-    # 清理 JSON 字符串中的控制字符（本地 LLM 可能返回包含控制字符的 JSON）
+    # 清理和修复 JSON（本地 LLM 可能返回格式不正确的 JSON）
     if LOCAL_LLM:
-        # 移除控制字符（除了换行符和制表符，它们在 JSON 字符串中需要转义）
+        # 移除控制字符（除了换行符和制表符）
         content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
         # 尝试提取 JSON 对象（如果响应包含其他文本）
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
@@ -214,18 +266,27 @@ async def generate_npc_response(
     try:
         return json.loads(content)
     except json.JSONDecodeError as json_err:
-        # JSON 解析失败，尝试进一步清理
+        # JSON 解析失败，尝试修复（使用与 generate_json 相同的修复逻辑）
         if LOCAL_LLM:
-            print(f"⚠️  JSON 解析失败，尝试清理响应: {json_err}")
-            print(f"   原始内容前 200 字符: {content[:200]}")
-            # 尝试移除所有非打印字符
-            content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r]', '', content)
+            print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
+            print(f"   原始内容前 300 字符: {content[:300]}")
+            
+            # 尝试修复截断的 JSON
+            content_fixed = content
+            open_braces = content_fixed.count('{')
+            close_braces = content_fixed.count('}')
+            if open_braces > close_braces:
+                content_fixed += '\n' + '}' * (open_braces - close_braces)
+            
+            # 清理非打印字符（保留中文）
+            content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\u4e00-\u9fff]', '', content_fixed)
             json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
             if json_match:
                 try:
                     return json.loads(json_match.group(0))
                 except:
                     pass
+            raise
         raise
 
 
@@ -483,9 +544,9 @@ async def judge_action(
     response = await client.chat.completions.create(**request_params)
     content = response.choices[0].message.content
     
-    # 清理 JSON 字符串中的控制字符（本地 LLM 可能返回包含控制字符的 JSON）
+    # 清理和修复 JSON（本地 LLM 可能返回格式不正确的 JSON）
     if LOCAL_LLM:
-        # 移除控制字符（除了换行符和制表符，它们在 JSON 字符串中需要转义）
+        # 移除控制字符（除了换行符和制表符）
         content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
         # 尝试提取 JSON 对象（如果响应包含其他文本）
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
@@ -495,16 +556,25 @@ async def judge_action(
     try:
         return json.loads(content)
     except json.JSONDecodeError as json_err:
-        # JSON 解析失败，尝试进一步清理
+        # JSON 解析失败，尝试修复（使用与 generate_json 相同的修复逻辑）
         if LOCAL_LLM:
-            print(f"⚠️  JSON 解析失败，尝试清理响应: {json_err}")
-            print(f"   原始内容前 200 字符: {content[:200]}")
-            # 尝试移除所有非打印字符
-            content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r]', '', content)
+            print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
+            print(f"   原始内容前 300 字符: {content[:300]}")
+            
+            # 尝试修复截断的 JSON
+            content_fixed = content
+            open_braces = content_fixed.count('{')
+            close_braces = content_fixed.count('}')
+            if open_braces > close_braces:
+                content_fixed += '\n' + '}' * (open_braces - close_braces)
+            
+            # 清理非打印字符（保留中文）
+            content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\u4e00-\u9fff]', '', content_fixed)
             json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
             if json_match:
                 try:
                     return json.loads(json_match.group(0))
                 except:
                     pass
+            raise
         raise
