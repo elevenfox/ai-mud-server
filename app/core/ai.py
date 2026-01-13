@@ -417,6 +417,13 @@ async def generate_npc_response(
     if LOCAL_LLM:
         # 移除控制字符（除了换行符和制表符）
         content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
+        # 替换 JSON 结构中的中文标点符号为英文标点
+        content = re.sub(r'(")\s*：\s*', r'\1: ', content)  # 中文冒号
+        content = re.sub(r'(")\s*，\s*', r'\1, ', content)  # 字符串后的中文逗号
+        content = re.sub(r'(\})\s*，\s*', r'\1, ', content)  # 对象后的中文逗号
+        content = re.sub(r'(\])\s*，\s*', r'\1, ', content)  # 数组后的中文逗号
+        content = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content)  # 值后的中文逗号
+        
         # 尝试提取 JSON 对象（如果响应包含其他文本）
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
         if json_match:
@@ -430,14 +437,81 @@ async def generate_npc_response(
             print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
             print(f"   原始内容前 300 字符: {content[:300]}")
             
-            # 尝试修复截断的 JSON
+            # 尝试修复常见的 JSON 问题
             content_fixed = content
+            
+            # 0. 再次尝试替换中文标点
+            content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
+            content_fixed = re.sub(r'(")\s*，\s*', r'\1, ', content_fixed)  # 字符串后的中文逗号
+            content_fixed = re.sub(r'(\})\s*，\s*', r'\1, ', content_fixed)  # 对象后的中文逗号
+            content_fixed = re.sub(r'(\])\s*，\s*', r'\1, ', content_fixed)  # 数组后的中文逗号
+            content_fixed = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content_fixed)  # 值后的中文逗号
+            
+            # 1. 修复字符串值中未转义的双引号
+            # 使用逐字符解析，转义字符串值中的引号
+            def escape_quotes_in_json(text):
+                result = []
+                i = 0
+                in_string = False
+                escape_next = False
+                
+                while i < len(text):
+                    char = text[i]
+                    
+                    if escape_next:
+                        result.append(char)
+                        escape_next = False
+                        i += 1
+                        continue
+                    
+                    if char == '\\':
+                        result.append(char)
+                        escape_next = True
+                        i += 1
+                        continue
+                    
+                    if char == '"':
+                        if not in_string:
+                            # 字符串开始
+                            in_string = True
+                            result.append(char)
+                        else:
+                            # 检查下一个字符，判断是否是字符串结束
+                            # 跳过空白字符
+                            j = i + 1
+                            while j < len(text) and text[j] in ' \t\n\r':
+                                j += 1
+                            
+                            if j >= len(text):
+                                # 文件结束，这是字符串结束
+                                in_string = False
+                                result.append(char)
+                            else:
+                                next_char = text[j]
+                                # 如果下一个非空白字符是 : , } ] 或换行，说明这是字符串结束
+                                if next_char in ':},]' or next_char == '\n':
+                                    in_string = False
+                                    result.append(char)
+                                else:
+                                    # 这是字符串值中的引号，需要转义
+                                    result.append('\\"')
+                        i += 1
+                        continue
+                    
+                    result.append(char)
+                    i += 1
+                
+                return ''.join(result)
+            
+            content_fixed = escape_quotes_in_json(content_fixed)
+            
+            # 2. 修复截断的 JSON
             open_braces = content_fixed.count('{')
             close_braces = content_fixed.count('}')
             if open_braces > close_braces:
                 content_fixed += '\n' + '}' * (open_braces - close_braces)
             
-            # 清理非打印字符（保留中文）
+            # 3. 清理非打印字符（保留中文）
             content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\u4e00-\u9fff]', '', content_fixed)
             json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
             if json_match:
@@ -719,6 +793,13 @@ async def judge_action(
     if LOCAL_LLM:
         # 移除控制字符（除了换行符和制表符）
         content = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f]', '', content)
+        # 替换 JSON 结构中的中文标点符号为英文标点
+        content = re.sub(r'(")\s*：\s*', r'\1: ', content)  # 中文冒号
+        content = re.sub(r'(")\s*，\s*', r'\1, ', content)  # 字符串后的中文逗号
+        content = re.sub(r'(\})\s*，\s*', r'\1, ', content)  # 对象后的中文逗号
+        content = re.sub(r'(\])\s*，\s*', r'\1, ', content)  # 数组后的中文逗号
+        content = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content)  # 值后的中文逗号
+        
         # 尝试提取 JSON 对象（如果响应包含其他文本）
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
         if json_match:
@@ -732,14 +813,78 @@ async def judge_action(
             print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
             print(f"   原始内容前 300 字符: {content[:300]}")
             
-            # 尝试修复截断的 JSON
-            content_fixed = content
+            # 0. 再次尝试替换中文标点（必须在转义引号之前）
+            content_fixed = re.sub(r'(")\s*：\s*', r'\1: ', content_fixed)  # 中文冒号
+            content_fixed = re.sub(r'(")\s*，\s*', r'\1, ', content_fixed)  # 字符串后的中文逗号
+            content_fixed = re.sub(r'(\})\s*，\s*', r'\1, ', content_fixed)  # 对象后的中文逗号
+            content_fixed = re.sub(r'(\])\s*，\s*', r'\1, ', content_fixed)  # 数组后的中文逗号
+            content_fixed = re.sub(r'(\d+|true|false|null)\s*，\s*', r'\1, ', content_fixed)  # 值后的中文逗号
+            
+            # 1. 修复字符串值中未转义的双引号
+            # 使用逐字符解析，转义字符串值中的引号
+            def escape_quotes_in_json(text):
+                result = []
+                i = 0
+                in_string = False
+                escape_next = False
+                
+                while i < len(text):
+                    char = text[i]
+                    
+                    if escape_next:
+                        result.append(char)
+                        escape_next = False
+                        i += 1
+                        continue
+                    
+                    if char == '\\':
+                        result.append(char)
+                        escape_next = True
+                        i += 1
+                        continue
+                    
+                    if char == '"':
+                        if not in_string:
+                            # 字符串开始
+                            in_string = True
+                            result.append(char)
+                        else:
+                            # 检查下一个字符，判断是否是字符串结束
+                            # 跳过空白字符
+                            j = i + 1
+                            while j < len(text) and text[j] in ' \t\n\r':
+                                j += 1
+                            
+                            if j >= len(text):
+                                # 文件结束，这是字符串结束
+                                in_string = False
+                                result.append(char)
+                            else:
+                                next_char = text[j]
+                                # 如果下一个非空白字符是 : , } ] 或换行，说明这是字符串结束
+                                if next_char in ':},]' or next_char == '\n':
+                                    in_string = False
+                                    result.append(char)
+                                else:
+                                    # 这是字符串值中的引号，需要转义
+                                    result.append('\\"')
+                        i += 1
+                        continue
+                    
+                    result.append(char)
+                    i += 1
+                
+                return ''.join(result)
+            
+            content_fixed = escape_quotes_in_json(content_fixed)
+            
+            # 2. 修复截断的 JSON
             open_braces = content_fixed.count('{')
             close_braces = content_fixed.count('}')
             if open_braces > close_braces:
                 content_fixed += '\n' + '}' * (open_braces - close_braces)
             
-            # 清理非打印字符（保留中文）
+            # 3. 清理非打印字符（保留中文）
             content_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\u4e00-\u9fff]', '', content_fixed)
             json_match = re.search(r'\{.*\}', content_cleaned, re.DOTALL)
             if json_match:
