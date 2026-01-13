@@ -263,6 +263,9 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             if LOCAL_LLM:
                 print(f"⚠️  JSON 解析失败，尝试修复: {json_err}")
                 print(f"   原始内容前 300 字符: {content[:300]}")
+                print(f"   完整内容长度: {len(content)} 字符")
+                print(f"   完整内容:\n{content}")
+                print(f"   {'='*80}")
                 
             # 尝试修复常见的 JSON 问题
             content_fixed = content
