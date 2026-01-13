@@ -68,16 +68,20 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
     full_system = f"{system_prompt}\n\n你必须只返回有效的 JSON。{schema_hint}"
     
     try:
-        response = await client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o"),
-            messages=[
+        # 构建请求参数
+        request_params = {
+            "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
+            "messages": [
                 {"role": "system", "content": full_system},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.7,
-            # 部分本地 LLM 不支持 response_format，400 错误时请检查此处
-            response_format={"type": "json_object"} if not LOCAL_LLM else None
-        )
+            "temperature": 0.7
+        }
+        # 本地 LLM 可能不支持 response_format，完全不传递该参数
+        if not LOCAL_LLM:
+            request_params["response_format"] = {"type": "json_object"}
+        
+        response = await client.chat.completions.create(**request_params)
         return json.loads(response.choices[0].message.content)
     except Exception as e:
         error_msg = str(e)
@@ -157,13 +161,17 @@ async def generate_npc_response(
             "internal_thought": "[MOCK] 内心想法..."
         }
     
-    response = await client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
-        messages=messages,
-        temperature=0.8,
-        # 本地 LLM 可能不支持 response_format
-        response_format={"type": "json_object"} if not LOCAL_LLM else None
-    )
+    # 构建请求参数
+    request_params = {
+        "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
+        "messages": messages,
+        "temperature": 0.8
+    }
+    # 本地 LLM 可能不支持 response_format，完全不传递该参数
+    if not LOCAL_LLM:
+        request_params["response_format"] = {"type": "json_object"}
+    
+    response = await client.chat.completions.create(**request_params)
     return json.loads(response.choices[0].message.content)
 
 
@@ -405,14 +413,18 @@ async def judge_action(
             }
         }
     
-    response = await client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
-        messages=[
+    # 构建请求参数
+    request_params = {
+        "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        temperature=0.3,  # 低温度，更确定性
-        # 本地 LLM 可能不支持 response_format
-        response_format={"type": "json_object"} if not LOCAL_LLM else None
-    )
+        "temperature": 0.3  # 低温度，更确定性
+    }
+    # 本地 LLM 可能不支持 response_format，完全不传递该参数
+    if not LOCAL_LLM:
+        request_params["response_format"] = {"type": "json_object"}
+    
+    response = await client.chat.completions.create(**request_params)
     return json.loads(response.choices[0].message.content)
