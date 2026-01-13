@@ -43,112 +43,9 @@ def parse_json_with_fallback(content: str) -> Dict[str, Any]:
         # 先尝试使用 json5 解析（更宽松）
         return json5.loads(content)
     except Exception as e:
-        # 如果 json5 失败，尝试标准 json
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as je:
-            # 如果都失败，抛出异常（调用者可以使用 repair_json_with_llm 修复）
-            raise e
+        # 如果 json5 失败
+        raise e
 
-
-async def repair_json_with_llm(invalid_json: str, expected_schema: Optional[str] = None) -> Dict[str, Any]:
-    """使用 LLM 修复无效的 JSON 字符串
-    
-    Args:
-        invalid_json: 无效的 JSON 字符串
-        expected_schema: 可选的 JSON schema 描述，帮助 LLM 理解期望的格式
-    
-    Returns:
-        修复后的 JSON 对象
-    """
-    if MOCK_MODE or client is None:
-        raise ValueError("LLM 不可用，无法修复 JSON")
-    
-    # 构建修复 prompt
-    schema_hint = ""
-    if expected_schema:
-        schema_hint = f"\n期望的 JSON 结构：\n{expected_schema}"
-    
-    system_prompt = f"""你是一个 JSON 修复专家。你的任务是将无效的 JSON 字符串修复为有效的 JSON。
-
-规则：
-1. 只返回修复后的 JSON，不要其他文字
-2. 保持原始数据的含义和结构
-3. 修复常见的 JSON 错误：
-   - 未转义的引号
-   - 尾随逗号
-   - 中文标点符号（，、：）
-   - 控制字符
-   - 未闭合的括号
-   - 多个 JSON 对象（只保留第一个）
-4. 确保所有字符串值都正确转义
-5. 确保所有数字、布尔值、null 格式正确{schema_hint}
-
-只返回修复后的 JSON，不要任何解释或额外文本。"""
-
-    user_prompt = f"""请修复以下无效的 JSON：
-
-{invalid_json[:2000]}  # 限制长度避免超出 token 限制
-
-只返回修复后的 JSON，不要其他内容。"""
-
-    try:
-        # 构建消息
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-        
-        # 如果使用本地 LLM，检查并截断消息
-        if LOCAL_LLM:
-            max_input_tokens = int(MAX_CONTEXT_LENGTH * 0.8)
-            messages = truncate_messages_if_needed(messages, max_input_tokens)
-        
-        # 构建请求参数
-        request_params = {
-            "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
-            "messages": messages,
-            "temperature": 0.1  # 低温度，确保修复准确性
-        }
-        
-        if not LOCAL_LLM:
-            request_params["response_format"] = {"type": "json_object"}
-        else:
-            request_params["max_tokens"] = min(MAX_OUTPUT_TOKENS, 1024)  # 修复 JSON 通常不需要太多 token
-        
-        response = await client.chat.completions.create(**request_params)
-        
-        # 检查响应
-        if not response.choices or len(response.choices) == 0:
-            raise ValueError("LLM 响应为空")
-        
-        choice = response.choices[0]
-        repaired_content = choice.message.content
-        
-        if repaired_content is None:
-            raise ValueError("LLM 修复后的内容为空")
-        
-        print(f"🔧 LLM 已尝试修复 JSON，修复后的内容长度: {len(repaired_content)} 字符")
-        
-        # 尝试解析修复后的 JSON
-        try:
-            return json5.loads(repaired_content)
-        except:
-            try:
-                return json.loads(repaired_content)
-            except json.JSONDecodeError:
-                # 如果修复后仍然无效，尝试提取 JSON 对象
-                json_match = re.search(r'\{.*\}', repaired_content, re.DOTALL)
-                if json_match:
-                    try:
-                        return json5.loads(json_match.group(0))
-                    except:
-                        return json.loads(json_match.group(0))
-                raise ValueError("LLM 修复后的 JSON 仍然无效")
-    
-    except Exception as e:
-        print(f"❌ LLM 修复 JSON 失败: {e}")
-        raise
 
 
 MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() == "true"
@@ -287,17 +184,6 @@ async def generate_narrative(system_prompt: str, user_prompt: str) -> str:
     return content
 
 
-def parse_content(content: str) -> Dict[str, Any]:
-
-    # Use json5 to parse the content
-    try:
-        return json5.loads(content)
-    except json.JSONDecodeError:
-        raise ValueError("无法解析内容为 JSON")
-    
-    # If not json, return the content as is
-    return content
-
 async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str = "") -> Dict[str, Any]:
     """生成结构化 JSON 输出
     
@@ -374,7 +260,7 @@ async def generate_json(system_prompt: str, user_prompt: str, schema_hint: str =
             raise ValueError("LLM 响应内容为空")
         
         try:
-            parsed_content = parse_content(content)
+            parsed_content = parse_json_with_fallback(content)
             return parsed_content
         except Exception as json_err:
             # JSON 解析失败，尝试修复
@@ -555,13 +441,88 @@ JSON 格式（必须严格遵守）：
     try:
         return parse_json_with_fallback(content)
     except Exception as json_err:
-        print(f"⚠️  JSON 解析失败，尝试使用 LLM 修复: {json_err}")
+        print(f"⚠️  JSON 解析失败: {json_err}")
+        # 尝试用正则匹配解析字符串
+        # - row："response": "*微笑* 『好的，我来帮你。』",
+        # - row："emotion": "happy",
+        # - row："relationship_change": 1,
+        # - row："internal_thought": "他看起来值得信任。"
+        # 匹配这四行，返回一个 JSON 对象
         try:
-            # 尝试使用 LLM 修复 JSON
-            return await repair_json_with_llm(content, expected_schema="NPC 对话响应格式：{\"response\": \"...\", \"emotion\": \"...\", \"relationship_change\": 数字, \"internal_thought\": \"...\"}")
-        except Exception as repair_err:
-            print(f"❌  LLM 修复也失败: {repair_err}")
-            raise json_err
+            result = {}
+            
+            # 匹配 "response" 字段（可能包含各种引号和特殊字符）
+            # 支持：双引号、单引号、中文引号『』「」，以及未加引号的值
+            # 处理嵌套引号：匹配到下一个逗号、换行或 } 之前的内容
+            response_patterns = [
+                r'"response"\s*:\s*"((?:[^"\\]|\\.)*)"',  # 标准双引号（支持转义）
+                r'"response"\s*:\s*\'((?:[^\'\\]|\\.)*)\'',  # 单引号（支持转义）
+                r'"response"\s*:\s*[『「]([^』」]*)[』」]',  # 中文引号
+                r'"response"\s*:\s*([^,\n}]+?)(?=\s*[,}\n])',  # 未加引号的值
+            ]
+            for pattern in response_patterns:
+                response_match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
+                if response_match:
+                    response_value = response_match.group(1).strip()
+                    if response_value:
+                        result["response"] = response_value
+                        break
+            
+            # 匹配 "emotion" 字段
+            emotion_patterns = [
+                r'"emotion"\s*:\s*"([^"]*)"',
+                r'"emotion"\s*:\s*\'([^\']*)\'',
+                r'"emotion"\s*:\s*([a-zA-Z_]+)',
+            ]
+            for pattern in emotion_patterns:
+                emotion_match = re.search(pattern, content, re.MULTILINE)
+                if emotion_match:
+                    emotion_value = emotion_match.group(1).strip()
+                    if emotion_value:
+                        result["emotion"] = emotion_value
+                        break
+            
+            # 匹配 "relationship_change" 字段（数字，可能有负号）
+            relationship_match = re.search(r'"relationship_change"\s*:\s*(-?\d+)', content, re.MULTILINE)
+            if relationship_match:
+                try:
+                    result["relationship_change"] = int(relationship_match.group(1))
+                except ValueError:
+                    pass
+            
+            # 匹配 "internal_thought" 或 "internal_thoughts" 字段
+            thought_patterns = [
+                r'"internal_thoughts?"\s*:\s*"((?:[^"\\]|\\.)*)"',
+                r'"internal_thoughts?"\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
+                r'"internal_thoughts?"\s*:\s*[『「]([^』」]*)[』」]',
+                r'"internal_thoughts?"\s*:\s*([^,\n}]+?)(?=\s*[,}\n])',
+            ]
+            for pattern in thought_patterns:
+                thought_match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
+                if thought_match:
+                    thought_value = thought_match.group(1).strip()
+                    if thought_value:
+                        result["internal_thought"] = thought_value
+                        break
+            
+            # 如果至少匹配到一个字段，返回结果
+            if result:
+                # 设置默认值
+                if "response" not in result:
+                    result["response"] = ""
+                if "emotion" not in result:
+                    result["emotion"] = "neutral"
+                if "relationship_change" not in result:
+                    result["relationship_change"] = 0
+                if "internal_thought" not in result:
+                    result["internal_thought"] = ""
+                
+                print(f"✅ 使用正则匹配成功解析 JSON，匹配到 {len(result)} 个字段")
+                return result
+        except Exception as regex_err:
+            print(f"⚠️  正则匹配解析也失败: {regex_err}")
+        
+        raise json_err
 
 
 async def generate_choices(
@@ -940,11 +901,5 @@ async def judge_action(
     try:
         return parse_json_with_fallback(content)
     except Exception as e:
-        print(f"⚠️  JSON 解析失败，尝试使用 LLM 修复: {e}")
-        try:
-            # 尝试使用 LLM 修复 JSON
-            expected_schema = schema_hint if schema_hint else "游戏选项响应格式：{\"narrative\": \"...\", \"choices\": [...], \"mood\": \"...\", \"character_positions\": {...}}"
-            return await repair_json_with_llm(content, expected_schema=expected_schema)
-        except Exception as repair_err:
-            print(f"❌  LLM 修复也失败: {repair_err}")
-            raise e
+        print(f"⚠️  JSON 解析失败: {e}")
+        raise e
