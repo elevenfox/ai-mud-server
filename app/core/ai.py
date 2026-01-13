@@ -716,6 +716,42 @@ async def generate_npc_response(
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
         if json_match:
             content = json_match.group(0)
+        else:
+            # 如果响应只是一个字符串（用引号包裹），尝试将其包装成 JSON 对象
+            content_stripped = content.strip()
+            if content_stripped.startswith('"') and content_stripped.endswith('"'):
+                # 这是一个字符串值，需要包装成 JSON 对象
+                try:
+                    # 先尝试解析字符串，如果成功，说明格式正确
+                    parsed_string = json.loads(content_stripped)
+                    # 包装成 JSON 对象
+                    content = json.dumps({
+                        "response": parsed_string,
+                        "emotion": "default",
+                        "relationship_change": 0,
+                        "internal_thought": ""
+                    }, ensure_ascii=False)
+                    print(f"⚠️  LLM 返回的是字符串值，已包装成 JSON 对象")
+                except json.JSONDecodeError:
+                    # 如果解析失败，说明字符串中包含未转义的控制字符
+                    # 手动处理：移除首尾引号，转义控制字符，重新包装
+                    inner_content = content_stripped[1:-1]
+                    # 转义控制字符（换行、回车、制表符）
+                    inner_content = inner_content.replace('\\', '\\\\')  # 先转义反斜杠
+                    inner_content = inner_content.replace('\n', '\\n')
+                    inner_content = inner_content.replace('\r', '\\r')
+                    inner_content = inner_content.replace('\t', '\\t')
+                    # 转义未转义的引号（但保留已转义的引号）
+                    # 注意：由于我们已经转义了反斜杠，所以需要小心处理
+                    inner_content = re.sub(r'(?<!\\)"', '\\"', inner_content)
+                    # 重新包装
+                    content = json.dumps({
+                        "response": inner_content,
+                        "emotion": "default",
+                        "relationship_change": 0,
+                        "internal_thought": ""
+                    }, ensure_ascii=False)
+                    print(f"⚠️  LLM 返回的是字符串值（包含控制字符），已修复并包装成 JSON 对象")
     
     try:
         return json.loads(content)
